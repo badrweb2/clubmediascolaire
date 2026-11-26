@@ -1,0 +1,6 @@
+{
+  "name": "المنصة التعليمية لمدرسة الحسن الداخل",
+  "description": "منصة رقمية مدرسية تفاعلية ومعرض إلكتروني لعرض وحفظ وتوثيق إنتاجات وإبداعات التلاميذ في مدرسة الحسن الداخل.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
