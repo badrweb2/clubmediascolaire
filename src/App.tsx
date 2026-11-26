@@ -95,6 +95,14 @@ function RouterView() {
     publicContent = <CatalogPage mode="projects" />;
   } else if (pathname === '/activities') {
     publicContent = <CatalogPage mode="activities" />;
+  } else if (pathname === '/creations') {
+    publicContent = <CatalogPage mode="creations" />;
+  } else if (pathname === '/presentations') {
+    publicContent = <CatalogPage mode="presentations" />;
+  } else if (pathname === '/competitions') {
+    publicContent = <CatalogPage mode="competitions" />;
+  } else if (pathname === '/designs') {
+    publicContent = <CatalogPage mode="designs" />;
   } else if (pathname === '/gallery') {
     publicContent = <CatalogPage mode="gallery" />;
   } else if (pathname === '/about') {

@@ -3,14 +3,27 @@ import { Filter, RotateCcw, Search } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { WorkCard } from '../../components/WorkCard.tsx';
 import { CONTENT_TYPE_LABELS, GRADE_LEVELS } from '../../lib/mediaUtils.ts';
-import type { ContentType, WorkItem } from '../../types.ts';
+import type { Category, ContentType, WorkItem } from '../../types.ts';
+
+export type CatalogMode =
+  | 'all'
+  | 'videos'
+  | 'audio'
+  | 'innovations'
+  | 'projects'
+  | 'activities'
+  | 'creations'
+  | 'presentations'
+  | 'competitions'
+  | 'designs'
+  | 'gallery';
 
 interface CatalogPageProps {
-  mode: 'all' | 'videos' | 'audio' | 'innovations' | 'projects' | 'activities' | 'gallery';
+  mode: CatalogMode;
 }
 
 const MODE_META: Record<
-  CatalogPageProps['mode'],
+  CatalogMode,
   { title: string; subtitle: string; lockedType?: ContentType }
 > = {
   all: {
@@ -28,16 +41,32 @@ const MODE_META: Record<
     lockedType: 'audio',
   },
   innovations: {
-    title: 'ركن الابتكارات ونادي العلوم والروبوتيك',
-    subtitle: 'مبادرات التلاميذ في الروبوتيك، البرمجة، الطاقة المتجددة، والابتكارات العلمية.',
+    title: 'ابتكارات النادي العلمي والتكنولوجي، مشاريع، مشاريع رقمية',
+    subtitle: 'ابتكارات النادي العلمي والتكنولوجي، المشاريع المدرسية، والمشاريع الرقمية والروبوتيك.',
   },
   projects: {
     title: 'صفحة المشاريع المدرسية والبحوث',
     subtitle: 'المشاريع العلمية والتربوية، المجلات الرقمية، والعروض التقديمية للتلاميذ.',
   },
   activities: {
-    title: 'ركن الأنشطة الثقافية والفنية والتربوية',
-    subtitle: 'فعاليات الأندية التربوية، المعارض الفنية، المسابقات المدرسية، وإبداعات التلاميذ.',
+    title: 'الأنشطة الثقافية والتربوية',
+    subtitle: 'فعاليات الأندية التربوية، نادي القراءة والمسرح، والأيام الثقافية والبيئية.',
+  },
+  creations: {
+    title: 'إبداعات التلاميذ',
+    subtitle: 'إنتاجات التلاميذ المتنوعة، المواهب الفردية، والمبادرات الإبداعية في المدرسة.',
+  },
+  presentations: {
+    title: 'العروض والبحوث المدرسية',
+    subtitle: 'العروض التقديمية التفاعلية، المجلات الرقمية، والبحوث العلمية والأدبية للتلاميذ.',
+  },
+  competitions: {
+    title: 'المسابقات والتحديات',
+    subtitle: 'مشاركات وإنجازات التلاميذ في الأولمبياد، تحدي القراءة، والمسابقات الثقافية والفنية.',
+  },
+  designs: {
+    title: 'تصاميم وإبداعات',
+    subtitle: 'التصاميم الرقمية، الملصقات التربوية، واللوحات الإبداعية المنجزة بأنامل التلاميذ.',
   },
   gallery: {
     title: 'معرض الصور والإبداعات الفنية',
@@ -45,6 +74,16 @@ const MODE_META: Record<
     lockedType: 'image',
   },
 };
+
+function collectIdsWithChildren(categories: Category[], rootIds: Set<number>): Set<number> {
+  const result = new Set<number>(rootIds);
+  for (const c of categories) {
+    if (c.parent_id && rootIds.has(c.parent_id)) {
+      result.add(c.id);
+    }
+  }
+  return result;
+}
 
 export function CatalogPage({ mode }: CatalogPageProps) {
   const { searchParams, categories, navigate } = useApp();
@@ -59,7 +98,7 @@ export function CatalogPage({ mode }: CatalogPageProps) {
   );
   const [selectedGrade, setSelectedGrade] = useState<string>('');
   const [dateFrom, setDateFrom] = useState<string>('');
-  const [sort, setSort] = useState<string>(() => searchParams.get('sort') || 'newest');
+  const [sort, setSort] = useState<string>(() => searchParams.get('sort') || 'custom');
 
   const [items, setItems] = useState<WorkItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,50 +106,84 @@ export function CatalogPage({ mode }: CatalogPageProps) {
 
   const searchKey = searchParams.toString();
 
-  // Sync mode and URL query changes cleanly
   useEffect(() => {
     const params = new URLSearchParams(searchKey);
     setSelectedType(meta.lockedType || params.get('contentType') || '');
     setSelectedCategoryId(params.get('categoryId') || '');
-    setSort(params.get('sort') || 'newest');
+    setSort(params.get('sort') || 'custom');
   }, [mode, meta.lockedType, searchKey]);
 
   const innovationCategoryIds = useMemo(() => {
-    const ids = new Set<number>();
-    const innovationMain = categories.find(
-      (c) => c.slug === 'projects' || c.name.includes('ابتكار')
-    );
-    if (innovationMain) ids.add(innovationMain.id);
+    const roots = new Set<number>();
     for (const c of categories) {
       if (
+        c.slug === 'projects' ||
+        c.slug === 'projects-science-club' ||
+        c.slug === 'projects-digital' ||
         c.slug === 'projects-robotics' ||
         c.slug === 'projects-environment' ||
         c.slug === 'videos-science' ||
-        c.name.includes('ابتكار') ||
-        c.name.includes('روبوت') ||
-        c.name.includes('علمي')
+        /ابتكار|النادي العلمي|تكنولوج|مشاريع|مشروع|روبوت/.test(c.name)
       ) {
-        ids.add(c.id);
+        roots.add(c.id);
       }
     }
-    return ids;
+    return collectIdsWithChildren(categories, roots);
   }, [categories]);
 
   const activityCategoryIds = useMemo(() => {
-    const ids = new Set<number>();
-    const mainSlugs = new Set([
-      'cultural-activities',
-      'arts-photos',
-      'competitions',
-      'student-creations',
-    ]);
+    const roots = new Set<number>();
     for (const c of categories) {
-      if (mainSlugs.has(c.slug)) ids.add(c.id);
+      if (c.slug === 'cultural-activities' || /الأنشطة الثقافية|أنشطة/.test(c.name)) {
+        roots.add(c.id);
+      }
     }
+    return collectIdsWithChildren(categories, roots);
+  }, [categories]);
+
+  const creationsCategoryIds = useMemo(() => {
+    const roots = new Set<number>();
     for (const c of categories) {
-      if (c.parent_id && ids.has(c.parent_id)) ids.add(c.id);
+      if (c.slug === 'student-creations' || c.name.includes('إبداعات التلاميذ')) {
+        roots.add(c.id);
+      }
     }
-    return ids;
+    return collectIdsWithChildren(categories, roots);
+  }, [categories]);
+
+  const presentationsCategoryIds = useMemo(() => {
+    const roots = new Set<number>();
+    for (const c of categories) {
+      if (
+        c.slug === 'research-presentations' ||
+        c.slug === 'research-magazine' ||
+        c.slug === 'research-slides' ||
+        /العروض|البحوث/.test(c.name)
+      ) {
+        roots.add(c.id);
+      }
+    }
+    return collectIdsWithChildren(categories, roots);
+  }, [categories]);
+
+  const competitionsCategoryIds = useMemo(() => {
+    const roots = new Set<number>();
+    for (const c of categories) {
+      if (c.slug === 'competitions' || /مسابق|تحديات/.test(c.name)) {
+        roots.add(c.id);
+      }
+    }
+    return collectIdsWithChildren(categories, roots);
+  }, [categories]);
+
+  const designsCategoryIds = useMemo(() => {
+    const roots = new Set<number>();
+    for (const c of categories) {
+      if (c.slug === 'designs-creations' || /تصاميم|تصميم/.test(c.name)) {
+        roots.add(c.id);
+      }
+    }
+    return collectIdsWithChildren(categories, roots);
   }, [categories]);
 
   useEffect(() => {
@@ -125,33 +198,46 @@ export function CatalogPage({ mode }: CatalogPageProps) {
       if (dateFrom) params.set('dateFrom', dateFrom);
       if (sort) params.set('sort', sort);
 
+      const matchesIds = (item: WorkItem, idSet: Set<number>) =>
+        idSet.has(item.category_id) ||
+        (item.subcategory_id ? idSet.has(item.subcategory_id) : false);
+
       fetch(`/api/public/works?${params.toString()}`)
         .then((r) => r.json())
         .then((res: { items?: WorkItem[] }) => {
           if (!active) return;
           let list = res.items || [];
-          if (mode === 'projects' && !selectedType && !selectedCategoryId) {
-            list = list.filter(
-              (item) =>
-                item.content_type === 'project' ||
-                item.content_type === 'pdf' ||
-                item.content_type === 'presentation'
-            );
-          } else if (mode === 'innovations' && !selectedType && !selectedCategoryId) {
-            list = list.filter(
-              (item) =>
-                item.content_type === 'project' ||
-                innovationCategoryIds.has(item.category_id) ||
-                (item.subcategory_id ? innovationCategoryIds.has(item.subcategory_id) : false) ||
-                /ابتكار|روبوت|طاقة|برمجة/.test(`${item.title} ${item.keywords}`)
-            );
-          } else if (mode === 'activities' && !selectedType && !selectedCategoryId) {
-            list = list.filter(
-              (item) =>
-                item.content_type === 'image' ||
-                activityCategoryIds.has(item.category_id) ||
-                (item.subcategory_id ? activityCategoryIds.has(item.subcategory_id) : false)
-            );
+          if (!selectedType && !selectedCategoryId) {
+            if (mode === 'projects') {
+              list = list.filter(
+                (item) =>
+                  item.content_type === 'project' ||
+                  item.content_type === 'pdf' ||
+                  item.content_type === 'presentation'
+              );
+            } else if (mode === 'innovations') {
+              list = list.filter(
+                (item) =>
+                  item.content_type === 'project' ||
+                  matchesIds(item, innovationCategoryIds) ||
+                  /ابتكار|روبوت|طاقة|برمجة|رقمية/.test(`${item.title} ${item.keywords}`)
+              );
+            } else if (mode === 'activities') {
+              list = list.filter((item) => matchesIds(item, activityCategoryIds));
+            } else if (mode === 'creations') {
+              list = list.filter((item) => matchesIds(item, creationsCategoryIds));
+            } else if (mode === 'presentations') {
+              list = list.filter(
+                (item) =>
+                  item.content_type === 'presentation' ||
+                  item.content_type === 'pdf' ||
+                  matchesIds(item, presentationsCategoryIds)
+              );
+            } else if (mode === 'competitions') {
+              list = list.filter((item) => matchesIds(item, competitionsCategoryIds));
+            } else if (mode === 'designs') {
+              list = list.filter((item) => matchesIds(item, designsCategoryIds));
+            }
           }
           setItems(list);
         })
@@ -177,6 +263,10 @@ export function CatalogPage({ mode }: CatalogPageProps) {
     mode,
     innovationCategoryIds,
     activityCategoryIds,
+    creationsCategoryIds,
+    presentationsCategoryIds,
+    competitionsCategoryIds,
+    designsCategoryIds,
   ]);
 
   const mainCategories = useMemo(
@@ -200,19 +290,43 @@ export function CatalogPage({ mode }: CatalogPageProps) {
       return categories.filter((c) => c.parent_id === activeMainCategory.id);
     }
     if (mode === 'audio') {
-      const radioCat = categories.find((c) => c.slug === 'audio-radio');
-      return radioCat ? categories.filter((c) => c.parent_id === radioCat.id) : [];
+      const cat = categories.find((c) => c.slug === 'audio-radio');
+      return cat ? categories.filter((c) => c.parent_id === cat.id) : [];
     }
     if (mode === 'videos') {
-      const vidCat = categories.find((c) => c.slug === 'videos');
-      return vidCat ? categories.filter((c) => c.parent_id === vidCat.id) : [];
+      const cat = categories.find((c) => c.slug === 'videos');
+      return cat ? categories.filter((c) => c.parent_id === cat.id) : [];
     }
     if (mode === 'innovations' || mode === 'projects') {
-      const projCat = categories.find((c) => c.slug === 'projects');
-      return projCat ? categories.filter((c) => c.parent_id === projCat.id) : [];
+      return categories.filter((c) => innovationCategoryIds.has(c.id) && c.parent_id !== null);
+    }
+    if (mode === 'activities') {
+      return categories.filter((c) => activityCategoryIds.has(c.id) && c.parent_id !== null);
+    }
+    if (mode === 'presentations') {
+      return categories.filter((c) => presentationsCategoryIds.has(c.id) && c.parent_id !== null);
+    }
+    if (mode === 'creations') {
+      return categories.filter((c) => creationsCategoryIds.has(c.id) && c.parent_id !== null);
+    }
+    if (mode === 'competitions') {
+      return categories.filter((c) => competitionsCategoryIds.has(c.id) && c.parent_id !== null);
+    }
+    if (mode === 'designs') {
+      return categories.filter((c) => designsCategoryIds.has(c.id) && c.parent_id !== null);
     }
     return [];
-  }, [categories, activeMainCategory, mode]);
+  }, [
+    categories,
+    activeMainCategory,
+    mode,
+    innovationCategoryIds,
+    activityCategoryIds,
+    presentationsCategoryIds,
+    creationsCategoryIds,
+    competitionsCategoryIds,
+    designsCategoryIds,
+  ]);
 
   const resetFilters = () => {
     setQuery('');
@@ -220,7 +334,7 @@ export function CatalogPage({ mode }: CatalogPageProps) {
     setSelectedType(meta.lockedType || '');
     setSelectedGrade('');
     setDateFrom('');
-    setSort('newest');
+    setSort('custom');
     if (mode === 'all') {
       navigate('/works');
     }
@@ -290,11 +404,11 @@ export function CatalogPage({ mode }: CatalogPageProps) {
         {/* Clickable Category / Subcategory Quick Links */}
         {(relatedSubcategories.length > 0 || (mode === 'all' && !activeMainCategory && mainCategories.length > 0)) && (
           <div className="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2">
-            {activeMainCategory && (
+            {activeMainCategory ? (
               <button
                 type="button"
                 onClick={() => handleSelectCategory(String(activeMainCategory.id))}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg border text-xs font-medium transition-all cursor-pointer ${
                   selectedCategoryId === String(activeMainCategory.id)
                     ? 'bg-[#1E40AF] text-white border-[#1E40AF]'
                     : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -302,13 +416,24 @@ export function CatalogPage({ mode }: CatalogPageProps) {
               >
                 الكل في {activeMainCategory.name}
               </button>
+            ) : (
+              selectedCategoryId === '' &&
+              relatedSubcategories.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleSelectCategory('')}
+                  className="px-3.5 py-1.5 rounded-lg border text-xs font-medium bg-[#1E40AF] text-white border-[#1E40AF] cursor-pointer"
+                >
+                  الكل
+                </button>
+              )
             )}
             {relatedSubcategories.map((sub) => (
               <button
                 key={sub.id}
                 type="button"
                 onClick={() => handleSelectCategory(String(sub.id))}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg border text-xs font-medium transition-all cursor-pointer ${
                   selectedCategoryId === String(sub.id)
                     ? 'bg-[#1E40AF] text-white border-[#1E40AF]'
                     : 'bg-white text-slate-700 border-slate-200 hover:border-[#1E40AF] hover:text-[#1E40AF]'
@@ -324,7 +449,7 @@ export function CatalogPage({ mode }: CatalogPageProps) {
                   key={cat.id}
                   type="button"
                   onClick={() => handleSelectCategory(String(cat.id))}
-                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-medium text-slate-700 hover:border-[#1E40AF] hover:text-[#1E40AF] transition-colors cursor-pointer"
+                  className="px-3.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-medium text-slate-700 hover:border-[#1E40AF] hover:text-[#1E40AF] transition-colors cursor-pointer"
                 >
                   {cat.name}
                 </button>
@@ -365,6 +490,7 @@ export function CatalogPage({ mode }: CatalogPageProps) {
               aria-label="الترتيب"
               className="px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#1E40AF]"
             >
+              <option value="custom">الترتيب المعتمد في المنصة</option>
               <option value="newest">الأحدث نشراً</option>
               <option value="views">الأكثر مشاهدة</option>
               <option value="oldest">الأقدم نشراً</option>

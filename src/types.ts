@@ -28,6 +28,15 @@ export interface Category {
   item_count?: number;
 }
 
+export interface ExtraMediaItem {
+  title: string;
+  content_type: ContentType;
+  source_method: SourceMethod;
+  original_url: string;
+  embed_url: string;
+  media_mime?: string;
+}
+
 export interface WorkItem {
   id: number;
   title: string;
@@ -43,6 +52,7 @@ export interface WorkItem {
   media_mime: string;
   thumbnail_url: string;
   gallery_urls: string[];
+  extra_media: ExtraMediaItem[];
   category_id: number;
   subcategory_id: number | null;
   category_name?: string;
@@ -53,6 +63,7 @@ export interface WorkItem {
   embed_status: EmbedHealth;
   embed_note: string;
   views_count: number;
+  sort_order: number;
   is_sample: boolean;
   created_at: string;
   updated_at: string;
@@ -80,6 +91,9 @@ export interface PlatformSettings {
   nav_projects_label: string;
   nav_activities_label: string;
   nav_works_label: string;
+  nav_presentations_label: string;
+  nav_competitions_label: string;
+  nav_designs_label: string;
   // Homepage section titles & visibility toggles ('1' or '0')
   show_stats_bar: string;
   show_categories_section: string;

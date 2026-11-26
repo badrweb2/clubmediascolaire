@@ -95,6 +95,18 @@ export function WorkDetailPage({ workId }: { workId: number }) {
       if (lastPublicRoute.startsWith('/activities')) {
         return { path: lastPublicRoute, label: 'العودة إلى الأنشطة' };
       }
+      if (lastPublicRoute.startsWith('/creations')) {
+        return { path: lastPublicRoute, label: 'العودة إلى إبداعات التلاميذ' };
+      }
+      if (lastPublicRoute.startsWith('/presentations')) {
+        return { path: lastPublicRoute, label: 'العودة إلى العروض والبحوث' };
+      }
+      if (lastPublicRoute.startsWith('/competitions')) {
+        return { path: lastPublicRoute, label: 'العودة إلى المسابقات والتحديات' };
+      }
+      if (lastPublicRoute.startsWith('/designs')) {
+        return { path: lastPublicRoute, label: 'العودة إلى تصاميم وإبداعات' };
+      }
       if (lastPublicRoute.startsWith('/gallery')) {
         return { path: lastPublicRoute, label: 'العودة إلى المعرض الفني' };
       }
@@ -257,6 +269,7 @@ export function WorkDetailPage({ workId }: { workId: number }) {
           originalUrl={item.original_url}
           thumbnailUrl={item.thumbnail_url}
           galleryUrls={item.gallery_urls}
+          extraMedia={item.extra_media}
         />
 
         {/* Description & Structured Accession Metadata */}

@@ -14,6 +14,7 @@ import {
 import type {
   Category,
   ContentType,
+  ExtraMediaItem,
   LinkInspectionResult,
   PlatformSettings,
   PublicSiteStats,
@@ -56,6 +57,8 @@ const VALID_CONTENT_TYPES: ContentType[] = [
 ];
 const VALID_SOURCE_METHODS: SourceMethod[] = ['gdrive', 'direct', 'youtube', 'project_bundle'];
 const VALID_STATUSES: PublishStatus[] = ['published', 'draft'];
+const CUSTOM_WORK_ORDER_SQL =
+  'CASE WHEN w.sort_order > 0 THEN 0 ELSE 1 END ASC, w.sort_order ASC, w.publish_date DESC, w.id DESC';
 
 const encoder = new TextEncoder();
 
@@ -228,6 +231,7 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
       media_mime TEXT NOT NULL DEFAULT '',
       thumbnail_url TEXT NOT NULL DEFAULT '',
       gallery_urls TEXT NOT NULL DEFAULT '[]',
+      extra_media TEXT NOT NULL DEFAULT '[]',
       category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
       subcategory_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
       keywords TEXT NOT NULL DEFAULT '',
@@ -236,6 +240,7 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
       embed_status TEXT NOT NULL DEFAULT 'ok',
       embed_note TEXT NOT NULL DEFAULT '',
       views_count INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       is_sample INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -355,8 +360,8 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
         title, description, student_name, grade_level, class_section, publish_date,
         content_type, source_method, original_url, embed_url, media_mime,
         thumbnail_url, gallery_urls, category_id, subcategory_id, keywords,
-        status, featured, embed_status, embed_note, views_count, is_sample
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', '', ?, 1)
+        status, featured, embed_status, embed_note, views_count, sort_order, is_sample
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', '', ?, ?, 1)
     `;
 
     const samples = [
@@ -523,7 +528,7 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
     ];
 
     await db.batch(
-      samples.map((s) =>
+      samples.map((s, idx) =>
         db
           .prepare(insertSql)
           .bind(
@@ -545,10 +550,39 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
             s.keywords,
             s.status,
             s.featured,
-            s.views
+            0,
+            idx + 1
           )
       )
     );
+  }
+
+  const { results: workCols = [] } = await db
+    .prepare(`PRAGMA table_info(work_items)`)
+    .all<{ name: string }>();
+  if (!workCols.some((c) => c.name === 'sort_order')) {
+    await db.prepare(`ALTER TABLE work_items ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`).run();
+  }
+  if (!workCols.some((c) => c.name === 'extra_media')) {
+    await db.prepare(`ALTER TABLE work_items ADD COLUMN extra_media TEXT NOT NULL DEFAULT '[]'`).run();
+  }
+
+  const sortOrderMigrated = await db
+    .prepare(`SELECT value FROM platform_settings WHERE key = '_internal_work_sort_order_migrated'`)
+    .first<{ value: string }>();
+  if (sortOrderMigrated?.value !== '1') {
+    const { results: existingWorks = [] } = await db
+      .prepare('SELECT id FROM work_items ORDER BY publish_date DESC, id DESC')
+      .all<{ id: number }>();
+    const stmts: D1PreparedStatement[] = existingWorks.map((w, idx) =>
+      db.prepare('UPDATE work_items SET sort_order = ? WHERE id = ?').bind(idx + 1, w.id)
+    );
+    stmts.push(
+      db.prepare(
+        `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('_internal_work_sort_order_migrated', '1')`
+      )
+    );
+    await db.batch(stmts);
   }
 
   const realMigrated = await db
@@ -563,6 +597,85 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
     ]);
   }
 
+  const extraCatsSeeded = await db
+    .prepare(`SELECT value FROM platform_settings WHERE key = '_internal_extra_cats_v2_seeded'`)
+    .first<{ value: string }>();
+  if (extraCatsSeeded?.value !== '1') {
+    const [hasDesigns, maxOrderRow, projParent] = await Promise.all([
+      db
+        .prepare(`SELECT id FROM categories WHERE slug = 'designs-creations' OR name = 'تصاميم وإبداعات' LIMIT 1`)
+        .first<{ id: number }>(),
+      db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM categories').first<{ m: number }>(),
+      db
+        .prepare(`SELECT id FROM categories WHERE slug = 'projects' OR name = 'المشاريع والابتكارات' LIMIT 1`)
+        .first<{ id: number }>(),
+    ]);
+
+    const extraStmts: D1PreparedStatement[] = [];
+    if (!hasDesigns) {
+      extraStmts.push(
+        db
+          .prepare(
+            'INSERT OR IGNORE INTO categories (name, slug, parent_id, description, sort_order) VALUES (?, ?, NULL, ?, ?)'
+          )
+          .bind(
+            'تصاميم وإبداعات',
+            'designs-creations',
+            'تصاميم رقمية، ملصقات إبداعية، وأعمال فنية مختارة للتلاميذ.',
+            Number(maxOrderRow?.m || 0) + 1
+          )
+      );
+    }
+    if (projParent) {
+      const [hasSci, hasDigital] = await Promise.all([
+        db
+          .prepare(
+            `SELECT id FROM categories WHERE slug = 'projects-science-club' OR name = 'ابتكارات النادي العلمي والتكنولوجي' LIMIT 1`
+          )
+          .first<{ id: number }>(),
+        db
+          .prepare(`SELECT id FROM categories WHERE slug = 'projects-digital' OR name = 'مشاريع رقمية' LIMIT 1`)
+          .first<{ id: number }>(),
+      ]);
+      if (!hasSci) {
+        extraStmts.push(
+          db
+            .prepare(
+              'INSERT OR IGNORE INTO categories (name, slug, parent_id, description, sort_order) VALUES (?, ?, ?, ?, ?)'
+            )
+            .bind(
+              'ابتكارات النادي العلمي والتكنولوجي',
+              'projects-science-club',
+              projParent.id,
+              'ابتكارات وتجارب النادي العلمي والتكنولوجي.',
+              10
+            )
+        );
+      }
+      if (!hasDigital) {
+        extraStmts.push(
+          db
+            .prepare(
+              'INSERT OR IGNORE INTO categories (name, slug, parent_id, description, sort_order) VALUES (?, ?, ?, ?, ?)'
+            )
+            .bind(
+              'مشاريع رقمية',
+              'projects-digital',
+              projParent.id,
+              'برمجة ومشاريع رقمية وتطبيقات تلاميذ المؤسسة.',
+              11
+            )
+        );
+      }
+    }
+    extraStmts.push(
+      db.prepare(
+        `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('_internal_extra_cats_v2_seeded', '1')`
+      )
+    );
+    await db.batch(extraStmts);
+  }
+
   initializedD1 = true;
 }
 
@@ -573,6 +686,18 @@ function mapWorkRow(row: Record<string, unknown>): WorkItem {
     if (Array.isArray(parsed)) gallery = parsed.filter((u): u is string => typeof u === 'string');
   } catch {
     gallery = [];
+  }
+  let extraMedia: ExtraMediaItem[] = [];
+  try {
+    const parsedExtra = JSON.parse(String(row.extra_media || '[]'));
+    if (Array.isArray(parsedExtra)) {
+      extraMedia = parsedExtra.filter(
+        (m): m is ExtraMediaItem =>
+          Boolean(m && typeof m === 'object' && typeof m.original_url === 'string' && typeof m.embed_url === 'string')
+      );
+    }
+  } catch {
+    extraMedia = [];
   }
   return {
     id: Number(row.id),
@@ -589,6 +714,7 @@ function mapWorkRow(row: Record<string, unknown>): WorkItem {
     media_mime: String(row.media_mime || ''),
     thumbnail_url: String(row.thumbnail_url || ''),
     gallery_urls: gallery,
+    extra_media: extraMedia,
     category_id: Number(row.category_id),
     subcategory_id:
       row.subcategory_id !== null && row.subcategory_id !== undefined
@@ -602,10 +728,42 @@ function mapWorkRow(row: Record<string, unknown>): WorkItem {
     embed_status: (row.embed_status as 'ok' | 'warning' | 'blocked') || 'ok',
     embed_note: String(row.embed_note || ''),
     views_count: Number(row.views_count || 0),
+    sort_order: Number(row.sort_order || 0),
     is_sample: Boolean(row.is_sample),
     created_at: String(row.created_at || ''),
     updated_at: String(row.updated_at || ''),
   };
+}
+
+function sanitizeExtraMediaEdge(raw: unknown): ExtraMediaItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ExtraMediaItem[] = [];
+  for (const rawEntry of raw) {
+    if (!rawEntry || typeof rawEntry !== 'object') continue;
+    const entry = rawEntry as Record<string, unknown>;
+    const rawUrl = typeof entry.original_url === 'string' ? entry.original_url.trim() : '';
+    if (!rawUrl || !isSafeUrl(rawUrl)) continue;
+    const eMethod = VALID_SOURCE_METHODS.includes(entry.source_method as SourceMethod)
+      ? (entry.source_method as SourceMethod)
+      : undefined;
+    const eType = VALID_CONTENT_TYPES.includes(entry.content_type as ContentType)
+      ? (entry.content_type as ContentType)
+      : undefined;
+    const eParsed = parseMediaUrlClient(rawUrl, eMethod, eType);
+    if (!eParsed.valid) continue;
+    out.push({
+      title: typeof entry.title === 'string' ? entry.title.trim().slice(0, 140) : '',
+      content_type: eType || eParsed.contentType,
+      source_method: eMethod && eMethod !== 'project_bundle' ? eMethod : eParsed.sourceMethod,
+      original_url: rawUrl,
+      embed_url:
+        typeof entry.embed_url === 'string' && isSafeUrl(entry.embed_url)
+          ? entry.embed_url.trim()
+          : eParsed.embedUrl,
+      media_mime: eParsed.mediaMime,
+    });
+  }
+  return out;
 }
 
 async function getSettingsD1(db: D1Database): Promise<PlatformSettings> {
@@ -1041,17 +1199,17 @@ export async function onRequest(context: EventContext): Promise<Response> {
         getSettingsD1(db),
         getCategoriesD1(db, true),
         getPublicSiteStatsD1(db),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked'`, [], 'w.publish_date DESC, w.id DESC', 8),
+        queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 8),
         queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked'`, [], 'w.views_count DESC, w.id DESC', 6),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.featured = 1 AND w.embed_status != 'blocked'`, [], 'w.publish_date DESC, w.id DESC', 6),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.content_type = 'audio' AND w.embed_status != 'blocked'`, [], 'w.publish_date DESC, w.id DESC', 4),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.content_type = 'image' AND w.embed_status != 'blocked'`, [], 'w.publish_date DESC, w.id DESC', 6),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.content_type = 'video' AND w.embed_status != 'blocked'`, [], 'w.publish_date DESC, w.id DESC', 4),
+        queryWorksD1(db, `WHERE w.status = 'published' AND w.featured = 1 AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 6),
+        queryWorksD1(db, `WHERE w.status = 'published' AND w.content_type = 'audio' AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 4),
+        queryWorksD1(db, `WHERE w.status = 'published' AND w.content_type = 'image' AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 6),
+        queryWorksD1(db, `WHERE w.status = 'published' AND w.content_type = 'video' AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 4),
         queryWorksD1(
           db,
           `WHERE w.status = 'published' AND w.content_type IN ('project', 'presentation', 'pdf') AND w.embed_status != 'blocked'`,
           [],
-          'w.publish_date DESC, w.id DESC',
+          CUSTOM_WORK_ORDER_SQL,
           6
         ),
       ]);
@@ -1083,7 +1241,7 @@ export async function onRequest(context: EventContext): Promise<Response> {
     const gradeLevel = (url.searchParams.get('gradeLevel') || '').trim();
     const dateFrom = (url.searchParams.get('dateFrom') || '').trim();
     const dateTo = (url.searchParams.get('dateTo') || '').trim();
-    const sort = (url.searchParams.get('sort') || 'newest').trim();
+    const sort = (url.searchParams.get('sort') || 'custom').trim();
 
     const conditions = [`w.status = 'published'`, `w.embed_status != 'blocked'`];
     const params: unknown[] = [];
@@ -1114,8 +1272,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
       params.push(dateTo);
     }
 
-    let orderBy = 'w.publish_date DESC, w.id DESC';
-    if (sort === 'views') orderBy = 'w.views_count DESC, w.id DESC';
+    let orderBy = CUSTOM_WORK_ORDER_SQL;
+    if (sort === 'newest') orderBy = 'w.publish_date DESC, w.id DESC';
+    else if (sort === 'views') orderBy = 'w.views_count DESC, w.id DESC';
     else if (sort === 'oldest') orderBy = 'w.publish_date ASC, w.id ASC';
 
     const items = await queryWorksD1(db, `WHERE ${conditions.join(' AND ')}`, params, orderBy);
@@ -1365,8 +1524,33 @@ export async function onRequest(context: EventContext): Promise<Response> {
         params.push(status);
       }
       const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-      const items = await queryWorksD1(db, whereClause, params, 'w.created_at DESC, w.id DESC');
+      const items = await queryWorksD1(db, whereClause, params, CUSTOM_WORK_ORDER_SQL);
       return jsonResponse({ items });
+    }
+
+    if (method === 'PUT' && path === '/api/admin/works/reorder') {
+      const body = (await request.json().catch(() => ({}))) as {
+        orders?: Array<{ id?: unknown; sort_order?: unknown }>;
+      };
+      const orders = Array.isArray(body.orders) ? body.orders : null;
+      if (!orders || orders.length === 0) {
+        return jsonResponse({ error: 'بيانات الترتيب غير صالحة.' }, 400);
+      }
+      const stmts: D1PreparedStatement[] = [];
+      for (const entry of orders) {
+        const id = Number(entry?.id);
+        const sortOrder = Number(entry?.sort_order);
+        if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(sortOrder) || sortOrder < 0) {
+          return jsonResponse({ error: 'أرقام الترتيب غير صالحة.' }, 400);
+        }
+        stmts.push(
+          db
+            .prepare(`UPDATE work_items SET sort_order = ?, updated_at = datetime('now') WHERE id = ?`)
+            .bind(Math.floor(sortOrder), id)
+        );
+      }
+      await db.batch(stmts);
+      return jsonResponse({ ok: true });
     }
 
     if (method === 'POST' && path === '/api/admin/works') {
@@ -1396,14 +1580,29 @@ export async function onRequest(context: EventContext): Promise<Response> {
             .filter((u): u is string => typeof u === 'string' && isSafeUrl(u))
             .map((u) => normalizeImageUrl(u))
         : [];
+      const extraMedia = sanitizeExtraMediaEdge(body.extra_media);
+      const rawOrder = Number(body.sort_order);
+      let effectiveOrder =
+        body.sort_order !== undefined &&
+        body.sort_order !== null &&
+        body.sort_order !== '' &&
+        Number.isFinite(rawOrder) &&
+        rawOrder > 0
+          ? Math.floor(rawOrder)
+          : 0;
+      if (effectiveOrder <= 0) {
+        const maxRow = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM work_items').first<{ m: number }>();
+        effectiveOrder = Number(maxRow?.m || 0) + 1;
+      }
+
       const res = await db
         .prepare(`
           INSERT INTO work_items (
             title, description, student_name, grade_level, class_section, publish_date,
             content_type, source_method, original_url, embed_url, media_mime,
-            thumbnail_url, gallery_urls, category_id, subcategory_id, keywords,
-            status, featured, embed_status, embed_note, is_sample
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            thumbnail_url, gallery_urls, extra_media, category_id, subcategory_id, keywords,
+            status, featured, embed_status, embed_note, sort_order, is_sample
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `)
         .bind(
           title,
@@ -1421,13 +1620,15 @@ export async function onRequest(context: EventContext): Promise<Response> {
             ? normalizeImageUrl(body.thumbnail_url)
             : parsed.thumbnailUrl,
           JSON.stringify(galleryUrls),
+          JSON.stringify(extraMedia),
           categoryId,
           body.subcategory_id ? Number(body.subcategory_id) : null,
           typeof body.keywords === 'string' ? body.keywords.trim() : '',
           VALID_STATUSES.includes(body.status as PublishStatus) ? body.status : 'draft',
           body.featured ? 1 : 0,
           body.embed_status === 'warning' || body.embed_status === 'blocked' ? body.embed_status : 'ok',
-          typeof body.embed_note === 'string' ? body.embed_note.trim() : ''
+          typeof body.embed_note === 'string' ? body.embed_note.trim() : '',
+          effectiveOrder
         )
         .run();
       const created = (await queryWorksD1(db, 'WHERE w.id = ?', [res.meta?.last_row_id], 'w.id DESC', 1))[0];
@@ -1481,14 +1682,24 @@ export async function onRequest(context: EventContext): Promise<Response> {
               .filter((u): u is string => typeof u === 'string' && isSafeUrl(u))
               .map((u) => normalizeImageUrl(u))
           : [];
+        const extraMedia = sanitizeExtraMediaEdge(body.extra_media);
+        const rawOrder = Number(body.sort_order);
+        const sortOrder =
+          body.sort_order !== undefined &&
+          body.sort_order !== null &&
+          body.sort_order !== '' &&
+          Number.isFinite(rawOrder) &&
+          rawOrder >= 0
+            ? Math.floor(rawOrder)
+            : 0;
         await db
           .prepare(`
             UPDATE work_items SET
               title = ?, description = ?, student_name = ?, grade_level = ?, class_section = ?,
               publish_date = ?, content_type = ?, source_method = ?, original_url = ?,
-              embed_url = ?, media_mime = ?, thumbnail_url = ?, gallery_urls = ?,
+              embed_url = ?, media_mime = ?, thumbnail_url = ?, gallery_urls = ?, extra_media = ?,
               category_id = ?, subcategory_id = ?, keywords = ?, status = ?, featured = ?,
-              embed_status = ?, embed_note = ?, updated_at = datetime('now')
+              embed_status = ?, embed_note = ?, sort_order = ?, updated_at = datetime('now')
             WHERE id = ?
           `)
           .bind(
@@ -1507,6 +1718,7 @@ export async function onRequest(context: EventContext): Promise<Response> {
               ? normalizeImageUrl(body.thumbnail_url)
               : parsed.thumbnailUrl,
             JSON.stringify(galleryUrls),
+            JSON.stringify(extraMedia),
             Number(body.category_id),
             body.subcategory_id ? Number(body.subcategory_id) : null,
             typeof body.keywords === 'string' ? body.keywords.trim() : '',
@@ -1514,6 +1726,7 @@ export async function onRequest(context: EventContext): Promise<Response> {
             body.featured ? 1 : 0,
             body.embed_status === 'warning' || body.embed_status === 'blocked' ? body.embed_status : 'ok',
             typeof body.embed_note === 'string' ? body.embed_note.trim() : '',
+            sortOrder,
             id
           )
           .run();

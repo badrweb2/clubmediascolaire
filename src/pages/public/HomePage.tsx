@@ -113,7 +113,7 @@ export function HomePage() {
                   type="button"
                   onClick={() => navigate('/works')}
                   style={{ backgroundColor: accentColor }}
-                  className="inline-flex items-center gap-2 px-5 py-3 rounded-lg text-white text-sm font-medium hover:opacity-95 transition-opacity cursor-pointer whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-lg text-white text-sm font-medium transition-all duration-300 hover:-translate-y-0.5 hover:scale-[1.03] hover:shadow-md active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <Search className="w-4 h-4" />
                   <span>{settings.hero_primary_btn_text || 'تصفح جميع الإنتاجات'}</span>
@@ -121,7 +121,7 @@ export function HomePage() {
                 <button
                   type="button"
                   onClick={() => navigate('/projects')}
-                  className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-white border border-slate-300 text-slate-800 text-sm font-medium hover:bg-slate-50 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-white border border-slate-300 text-slate-800 text-sm font-medium transition-all duration-300 hover:bg-slate-50 hover:-translate-y-0.5 hover:scale-[1.03] hover:shadow-sm active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <FolderKanban className="w-4 h-4 text-[#1E40AF]" />
                   <span>{settings.hero_secondary_btn_text || 'المشاريع والابتكارات'}</span>
@@ -131,14 +131,14 @@ export function HomePage() {
 
             {/* Hero Cover Image */}
             <div className="lg:col-span-6">
-              <div className="relative h-full min-h-[280px] lg:min-h-[380px] rounded-2xl overflow-hidden border border-slate-200 bg-slate-100">
+              <div className="group relative h-full min-h-[280px] lg:min-h-[380px] rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-xs">
                 {isSafeUrl(normalizeImageUrl(settings.hero_cover_url)) && !heroImgError ? (
                   <img
                     src={normalizeImageUrl(settings.hero_cover_url)}
                     alt={settings.platform_title}
                     referrerPolicy="no-referrer"
                     onError={() => setHeroImgError(true)}
-                    className="w-full h-full lg:h-full object-cover"
+                    className="w-full h-full lg:h-full object-cover animate-hero-zoom transition-transform duration-700"
                   />
                 ) : (
                   <div className="w-full h-full bg-gradient-to-br from-slate-100 to-slate-200 flex flex-col items-center justify-center p-8 text-slate-500">
@@ -152,7 +152,7 @@ export function HomePage() {
 
           {/* 4-Column Real Institutional Statistics Row */}
           {isSettingEnabled(settings.show_stats_bar) && (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-10 pt-8 border-t border-slate-200">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-10 pt-8 border-t border-slate-200 animate-fade-up">
               <div className="space-y-1">
                 <div className="text-xs text-slate-500">إنتاجات منشورة</div>
                 <div className="font-display text-2xl font-bold text-slate-900 tabular-nums">
@@ -187,7 +187,7 @@ export function HomePage() {
 
       {/* 2. Categories Directory */}
       {isSettingEnabled(settings.show_categories_section) && (
-        <section className="max-w-[1240px] mx-auto px-4 sm:px-6">
+        <section className="max-w-[1240px] mx-auto px-4 sm:px-6 animate-fade-up">
           <div className="flex items-end justify-between gap-4 mb-6">
             <div>
               <div className="text-xs font-medium text-[#1E40AF] mb-1">التصنيفات التربوية</div>
@@ -211,10 +211,10 @@ export function HomePage() {
                 key={cat.id}
                 type="button"
                 onClick={() => navigate(`/works?categoryId=${cat.id}`)}
-                className="text-right bg-white border border-slate-200 rounded-xl p-5 hover:border-[#1E40AF]/50 hover:shadow-xs transition-all cursor-pointer group"
+                className="text-right bg-white border border-slate-200 rounded-xl p-5 hover:border-[#1E40AF]/50 hover:-translate-y-1 hover:scale-[1.02] hover:shadow-md active:scale-[0.98] transition-all duration-300 cursor-pointer group"
               >
                 <div className="flex items-center justify-between gap-2 mb-2">
-                  <Layers className="w-5 h-5 text-[#1E40AF]" />
+                  <Layers className="w-5 h-5 text-[#1E40AF] transition-transform duration-300 group-hover:scale-110" />
                   <span className="text-xs font-mono tabular-nums text-slate-500">
                     {cat.item_count || 0} عمل
                   </span>

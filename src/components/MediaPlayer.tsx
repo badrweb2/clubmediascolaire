@@ -16,8 +16,8 @@ import {
   ZoomOut,
   AlertCircle,
 } from 'lucide-react';
-import type { ContentType, SourceMethod } from '../types.ts';
-import { isSafeUrl, normalizeImageUrl } from '../lib/mediaUtils.ts';
+import type { ContentType, ExtraMediaItem, SourceMethod } from '../types.ts';
+import { CONTENT_TYPE_LABELS, isSafeUrl, normalizeImageUrl } from '../lib/mediaUtils.ts';
 
 interface MediaPlayerProps {
   title: string;
@@ -27,6 +27,7 @@ interface MediaPlayerProps {
   originalUrl: string;
   thumbnailUrl?: string;
   galleryUrls?: string[];
+  extraMedia?: ExtraMediaItem[];
   compact?: boolean;
   isAdminPreview?: boolean;
 }
@@ -377,7 +378,7 @@ export function InteractiveImageGallery({
                 src={imgUrl}
                 alt={`${title} - ${idx + 1}`}
                 referrerPolicy="no-referrer"
-                className="w-24 h-16 object-cover"
+                className="w-24 h-16 object-contain bg-slate-50 p-0.5"
               />
             </button>
           ))}
@@ -415,6 +416,142 @@ export function InteractiveImageGallery({
   );
 }
 
+export function CoordinatedGallerySection({
+  images,
+  title,
+  compact = false,
+}: {
+  images: string[];
+  title: string;
+  compact?: boolean;
+}) {
+  const safeImages = images.map(normalizeImageUrl).filter(isSafeUrl);
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (lightboxIdx === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxIdx(null);
+      if (e.key === 'ArrowRight' && safeImages.length > 1) {
+        setLightboxIdx((prev) =>
+          prev === null ? 0 : (prev - 1 + safeImages.length) % safeImages.length
+        );
+      }
+      if (e.key === 'ArrowLeft' && safeImages.length > 1) {
+        setLightboxIdx((prev) => (prev === null ? 0 : (prev + 1) % safeImages.length));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxIdx, safeImages.length]);
+
+  if (safeImages.length === 0) return null;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
+        <div className="text-sm font-semibold text-slate-900">
+          الصور المرفقة والمنسقة بالموضوع ({safeImages.length})
+        </div>
+        <span className="text-xs text-slate-500">اضغط على أي صورة للتكبير</span>
+      </div>
+
+      <div
+        className={`grid gap-4 ${
+          compact
+            ? 'grid-cols-1 sm:grid-cols-2'
+            : safeImages.length === 1
+              ? 'grid-cols-1 max-w-2xl mx-auto'
+              : safeImages.length === 2
+                ? 'grid-cols-1 sm:grid-cols-2'
+                : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
+        }`}
+      >
+        {safeImages.map((imgUrl, idx) => (
+          <button
+            key={`${imgUrl}-${idx}`}
+            type="button"
+            onClick={() => setLightboxIdx(idx)}
+            className="group relative bg-slate-50 border border-slate-200 rounded-xl overflow-hidden p-2 flex flex-col items-center justify-center hover:border-[#1E40AF]/60 hover:shadow-md transition-all duration-300 cursor-pointer"
+          >
+            <div className="w-full aspect-[4/3] flex items-center justify-center overflow-hidden rounded-lg bg-white">
+              <img
+                src={imgUrl}
+                alt={`${title} - صورة ${idx + 1}`}
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-contain transition-transform duration-500 group-hover:scale-105"
+              />
+            </div>
+            <div className="w-full flex items-center justify-between pt-2 px-1 text-xs text-slate-500">
+              <span className="font-medium text-slate-700">صورة {idx + 1}</span>
+              <span className="inline-flex items-center gap-1 text-[#1E40AF] opacity-80 group-hover:opacity-100">
+                <Maximize2 className="w-3.5 h-3.5" />
+                <span>تكبير</span>
+              </span>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {lightboxIdx !== null && safeImages[lightboxIdx] && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/92 flex flex-col items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-6xl flex items-center justify-between text-white mb-4">
+            <span className="text-sm font-medium truncate">
+              {title} — صورة {lightboxIdx + 1} من {safeImages.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => setLightboxIdx(null)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+              <span>إغلاق</span>
+            </button>
+          </div>
+          <div className="relative flex-1 w-full max-w-6xl flex items-center justify-center">
+            <img
+              src={safeImages[lightboxIdx]}
+              alt={`${title} - ${lightboxIdx + 1}`}
+              referrerPolicy="no-referrer"
+              className="max-w-full max-h-[82vh] object-contain rounded-lg"
+            />
+            {safeImages.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLightboxIdx((prev) =>
+                      prev === null ? 0 : (prev - 1 + safeImages.length) % safeImages.length
+                    )
+                  }
+                  aria-label="الصورة السابقة"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-white/90 text-slate-900 shadow hover:bg-white cursor-pointer"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLightboxIdx((prev) => (prev === null ? 0 : (prev + 1) % safeImages.length))
+                  }
+                  aria-label="الصورة التالية"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-white/90 text-slate-900 shadow hover:bg-white cursor-pointer"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MediaPlayer({
   title,
   contentType,
@@ -423,6 +560,7 @@ export function MediaPlayer({
   originalUrl,
   thumbnailUrl,
   galleryUrls = [],
+  extraMedia = [],
   compact = false,
   isAdminPreview = false,
 }: MediaPlayerProps) {
@@ -430,19 +568,27 @@ export function MediaPlayer({
   const [videoError, setVideoError] = useState(false);
 
   const safeEmbed = isSafeUrl(embedUrl) ? embedUrl : '';
+  const hasGalleryExtras =
+    contentType !== 'image' &&
+    contentType !== 'project' &&
+    galleryUrls.map(normalizeImageUrl).some(isSafeUrl);
+  const validExtraMedia = extraMedia.filter(
+    (item) => isSafeUrl(item.embed_url) || isSafeUrl(item.original_url)
+  );
 
-  if (!safeEmbed && contentType !== 'image' && contentType !== 'project') {
-    return (
-      <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 text-center">
-        <AlertCircle className="w-8 h-8 text-amber-600 mx-auto mb-3" />
-        <p className="text-sm font-medium text-slate-800">
-          {isAdminPreview
-            ? 'الرابط المدخل غير مكتمل أو غير صالح للتضمين.'
-            : 'هذا المحتوى غير متاح للعرض حالياً.'}
-        </p>
-      </div>
-    );
-  }
+  const renderPrimaryPlayer = () => {
+    if (!safeEmbed && contentType !== 'image' && contentType !== 'project') {
+      return (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 text-center">
+          <AlertCircle className="w-8 h-8 text-amber-600 mx-auto mb-3" />
+          <p className="text-sm font-medium text-slate-800">
+            {isAdminPreview
+              ? 'الرابط المدخل غير مكتمل أو غير صالح للتضمين.'
+              : 'هذا المحتوى غير متاح للعرض حالياً.'}
+          </p>
+        </div>
+      );
+    }
 
   // 1. Google Drive / Docs / Slides official preview embed
   if (sourceMethod === 'gdrive' && safeEmbed) {
@@ -538,7 +684,13 @@ export function MediaPlayer({
 
   // 5. Image / Art Gallery
   if (contentType === 'image') {
-    const imgs = galleryUrls.length > 0 ? galleryUrls : [safeEmbed || thumbnailUrl || ''];
+    const imgs = Array.from(
+      new Set(
+        [safeEmbed || thumbnailUrl, ...galleryUrls]
+          .map((u) => (u ? normalizeImageUrl(u) : ''))
+          .filter((u) => isSafeUrl(u))
+      )
+    );
     return <InteractiveImageGallery images={imgs} title={title} />;
   }
 
@@ -615,6 +767,54 @@ export function MediaPlayer({
       {!safeEmbed && !projectImages.length && isAdminPreview && (
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-sm text-slate-600">
           أضف صورة غلاف أو رابط ملف للمشروع ({originalUrl || 'بدون رابط'}) لمعاينته هنا.
+        </div>
+      )}
+    </div>
+  );
+  };
+
+  return (
+    <div className="space-y-6">
+      {renderPrimaryPlayer()}
+      {hasGalleryExtras && (
+        <CoordinatedGallerySection images={galleryUrls} title={title} compact={compact} />
+      )}
+      {validExtraMedia.length > 0 && (
+        <div className="space-y-5">
+          {validExtraMedia.map((media, idx) => {
+            const mediaTitle =
+              media.title.trim() || `${CONTENT_TYPE_LABELS[media.content_type]} إضافي (${idx + 2})`;
+            return (
+              <div
+                key={`${media.original_url}-${idx}`}
+                className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-md bg-[#1E40AF]/10 text-[#1E40AF] inline-flex items-center justify-center text-xs font-mono font-bold">
+                      {idx + 2}
+                    </span>
+                    <h3 className="text-sm sm:text-base font-semibold text-slate-900">
+                      {mediaTitle}
+                    </h3>
+                  </div>
+                  <span className="text-xs text-slate-500">
+                    {CONTENT_TYPE_LABELS[media.content_type]}
+                  </span>
+                </div>
+                <MediaPlayer
+                  title={mediaTitle}
+                  contentType={media.content_type}
+                  sourceMethod={media.source_method}
+                  embedUrl={media.embed_url || media.original_url}
+                  originalUrl={media.original_url}
+                  thumbnailUrl={thumbnailUrl}
+                  compact={compact}
+                  isAdminPreview={isAdminPreview}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

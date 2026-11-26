@@ -1,12 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowRight,
+  ArrowUp,
   CheckCircle2,
   Eye,
   FileCheck2,
   FolderKanban,
   HardDrive,
+  Image as ImageIcon,
   Link2,
+  Plus,
   Save,
   Send,
   Trash2,
@@ -16,6 +21,7 @@ import {
 import { useApp } from '../../context/AppContext.tsx';
 import { AdminLayout } from './AdminLayout.tsx';
 import { MediaPlayer } from '../../components/MediaPlayer.tsx';
+import { ConfirmDeleteDropdown } from '../../components/ConfirmDeleteDropdown.tsx';
 import {
   CONTENT_TYPE_LABELS,
   GRADE_LEVELS,
@@ -27,6 +33,7 @@ import type {
   Category,
   ContentType,
   EmbedHealth,
+  ExtraMediaItem,
   LinkInspectionResult,
   PublishStatus,
   SourceMethod,
@@ -61,7 +68,8 @@ const PRESET_THUMBNAILS = [
 ];
 
 export function AdminWorkEditorPage({ editId }: { editId?: number }) {
-  const { apiFetch, navigate, refreshPublicBootstrap } = useApp();
+  const { apiFetch, navigate, refreshPublicBootstrap, searchParams } = useApp();
+  const fromQuery = searchParams.get('from') || '';
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(Boolean(editId));
@@ -73,6 +81,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
   const [originalUrl, setOriginalUrl] = useState('');
   const [embedUrl, setEmbedUrl] = useState('');
   const [mediaMime, setMediaMime] = useState('');
+  const [extraMediaItems, setExtraMediaItems] = useState<ExtraMediaItem[]>([]);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -83,10 +92,11 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
   const [categoryId, setCategoryId] = useState<number>(1);
   const [subcategoryId, setSubcategoryId] = useState<string>('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
-  const [galleryUrlsText, setGalleryUrlsText] = useState('');
+  const [galleryItems, setGalleryItems] = useState<string[]>(['', '']);
   const [keywords, setKeywords] = useState('');
   const [status, setStatus] = useState<PublishStatus>('draft');
   const [featured, setFeatured] = useState(false);
+  const [sortOrder, setSortOrder] = useState<string>('');
 
   const [embedStatus, setEmbedStatus] = useState<EmbedHealth>('ok');
   const [inspection, setInspection] = useState<LinkInspectionResult | null>(null);
@@ -94,7 +104,6 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
     null
   );
   const [showLivePreview, setShowLivePreview] = useState(true);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [thumbError, setThumbError] = useState(false);
 
   const resolvedThumbnailUrl = useMemo(
@@ -111,12 +120,22 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
       .then((res) => {
         setCategories(res.categories);
         if (!editId) {
+          const fromParams = new URLSearchParams(fromQuery);
+          const presetCat = Number(fromParams.get('categoryId') || '');
+          const presetSub = fromParams.get('subCategoryId') || '';
           const firstMain = res.categories.find((c) => c.parent_id === null);
-          if (firstMain) setCategoryId(firstMain.id);
+          if (presetCat && res.categories.some((c) => c.id === presetCat && c.parent_id === null)) {
+            setCategoryId(presetCat);
+            if (presetSub && res.categories.some((c) => String(c.id) === presetSub && c.parent_id === presetCat)) {
+              setSubcategoryId(presetSub);
+            }
+          } else if (firstMain) {
+            setCategoryId(firstMain.id);
+          }
         }
       })
       .catch(() => {});
-  }, [apiFetch, editId]);
+  }, [apiFetch, editId, fromQuery]);
 
   useEffect(() => {
     if (!editId) return;
@@ -130,6 +149,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
         setOriginalUrl(item.original_url);
         setEmbedUrl(item.embed_url);
         setMediaMime(item.media_mime);
+        setExtraMediaItems(Array.isArray(item.extra_media) ? item.extra_media : []);
         setTitle(item.title);
         setDescription(item.description);
         setStudentName(item.student_name);
@@ -139,10 +159,13 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
         setCategoryId(item.category_id);
         setSubcategoryId(item.subcategory_id ? String(item.subcategory_id) : '');
         setThumbnailUrl(item.thumbnail_url);
-        setGalleryUrlsText((item.gallery_urls || []).join('\n'));
+        setGalleryItems(
+          item.gallery_urls && item.gallery_urls.length > 0 ? item.gallery_urls : ['']
+        );
         setKeywords(item.keywords);
         setStatus(item.status);
         setFeatured(item.featured);
+        setSortOrder(item.sort_order ? String(item.sort_order) : '');
         setEmbedStatus(item.embed_status);
       })
       .catch((err) => {
@@ -230,14 +253,131 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
     }
   };
 
+  const returnToCategoryTarget = useMemo(() => {
+    const fromParams = new URLSearchParams(fromQuery);
+    const fromCat = fromParams.get('categoryId') || '';
+    const fromSub = fromParams.get('subCategoryId') || '';
+
+    if (fromQuery && (fromCat || fromSub)) {
+      const catObj = categories.find((c) => String(c.id) === (fromSub || fromCat));
+      return {
+        url: `/admin/works?${fromQuery}`,
+        label: catObj ? `العودة إلى التصنيف: ${catObj.name}` : 'العودة إلى التصنيف',
+      };
+    }
+
+    if (categoryId) {
+      const sp = new URLSearchParams();
+      sp.set('categoryId', String(categoryId));
+      if (subcategoryId) sp.set('subCategoryId', subcategoryId);
+      const catObj = categories.find((c) => String(c.id) === (subcategoryId || String(categoryId)));
+      return {
+        url: `/admin/works?${sp.toString()}`,
+        label: catObj ? `العودة إلى التصنيف: ${catObj.name}` : 'العودة إلى التصنيف',
+      };
+    }
+
+    return {
+      url: fromQuery ? `/admin/works?${fromQuery}` : '/admin/works',
+      label: 'العودة إلى التصنيف',
+    };
+  }, [fromQuery, categories, categoryId, subcategoryId]);
+
+  const validExtraMediaPreview = useMemo<ExtraMediaItem[]>(
+    () =>
+      extraMediaItems
+        .filter((m) => isSafeUrl(m.original_url.trim()))
+        .map((m) => ({
+          ...m,
+          title: m.title.trim(),
+          original_url: m.original_url.trim(),
+          embed_url: (m.embed_url || m.original_url).trim(),
+        })),
+    [extraMediaItems]
+  );
+
+  const addExtraMediaSlot = () => {
+    setExtraMediaItems((prev) => [
+      ...prev,
+      {
+        title: '',
+        content_type: contentType,
+        source_method: sourceMethod,
+        original_url: '',
+        embed_url: '',
+        media_mime: '',
+      },
+    ]);
+  };
+
+  const updateExtraMediaUrl = (idx: number, nextUrl: string) => {
+    setExtraMediaItems((prev) =>
+      prev.map((item, i) => {
+        if (i !== idx) return item;
+        if (!nextUrl.trim()) {
+          return { ...item, original_url: nextUrl, embed_url: '', media_mime: '' };
+        }
+        const parsed = parseMediaUrlClient(nextUrl, item.source_method, item.content_type);
+        if (parsed.valid) {
+          return {
+            ...item,
+            original_url: nextUrl,
+            embed_url: parsed.embedUrl,
+            media_mime: parsed.mediaMime,
+            source_method:
+              parsed.sourceMethod !== item.source_method && item.source_method !== 'project_bundle'
+                ? parsed.sourceMethod
+                : item.source_method,
+            content_type: item.content_type !== 'project' ? parsed.contentType : item.content_type,
+          };
+        }
+        return { ...item, original_url: nextUrl, embed_url: nextUrl };
+      })
+    );
+  };
+
+  const moveExtraMediaSlot = (idx: number, delta: -1 | 1) => {
+    const target = idx + delta;
+    if (target < 0 || target >= extraMediaItems.length) return;
+    setExtraMediaItems((prev) => {
+      const next = [...prev];
+      const temp = next[idx];
+      next[idx] = next[target];
+      next[target] = temp;
+      return next;
+    });
+  };
+
+  const removeExtraMediaSlot = (idx: number) => {
+    setExtraMediaItems((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const galleryUrlsArray = useMemo(
     () =>
-      galleryUrlsText
-        .split('\n')
+      galleryItems
         .map((line) => normalizeImageUrl(line.trim()))
         .filter((line) => isSafeUrl(line)),
-    [galleryUrlsText]
+    [galleryItems]
   );
+
+  const moveGallerySlot = (idx: number, delta: -1 | 1) => {
+    const target = idx + delta;
+    if (target < 0 || target >= galleryItems.length) return;
+    setGalleryItems((prev) => {
+      const next = [...prev];
+      const temp = next[idx];
+      next[idx] = next[target];
+      next[target] = temp;
+      return next;
+    });
+  };
+
+  const removeGallerySlot = (idx: number) => {
+    setGalleryItems((prev) => {
+      if (prev.length <= 1) return [''];
+      return prev.filter((_, i) => i !== idx);
+    });
+  };
 
   const handleSave = async (targetStatus: PublishStatus) => {
     setFeedback(null);
@@ -275,6 +415,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
         original_url: originalUrl.trim(),
         embed_url: embedUrl.trim() || originalUrl.trim(),
         media_mime: mediaMime,
+        extra_media: validExtraMediaPreview,
         thumbnail_url: normalizeImageUrl(thumbnailUrl.trim()),
         gallery_urls: galleryUrlsArray,
         category_id: categoryId,
@@ -282,6 +423,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
         keywords: keywords.trim(),
         status: targetStatus,
         featured,
+        sort_order: sortOrder.trim() ? Number(sortOrder) : 0,
         embed_status: embedStatus,
         embed_note: inspection?.message || '',
       };
@@ -295,6 +437,8 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
       );
 
       setStatus(res.item.status);
+      setSortOrder(res.item.sort_order ? String(res.item.sort_order) : '');
+      setExtraMediaItems(Array.isArray(res.item.extra_media) ? res.item.extra_media : []);
       await refreshPublicBootstrap();
       setFeedback({
         type: 'success',
@@ -305,7 +449,11 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
       });
 
       if (!editId) {
-        navigate(`/admin/edit/${res.item.id}`);
+        navigate(
+          fromQuery
+            ? `/admin/edit/${res.item.id}?from=${encodeURIComponent(fromQuery)}`
+            : `/admin/edit/${res.item.id}`
+        );
       }
     } catch (err) {
       setFeedback({
@@ -323,13 +471,12 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
     try {
       await apiFetch(`/api/admin/works/${editId}`, { method: 'DELETE' });
       await refreshPublicBootstrap();
-      navigate('/admin/works');
+      navigate(returnToCategoryTarget.url);
     } catch (err) {
       setFeedback({
         type: 'error',
         text: err instanceof Error ? err.message : 'تعذر حذف المحتوى.',
       });
-      setConfirmDelete(false);
     } finally {
       setSaving(false);
     }
@@ -389,7 +536,15 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate(returnToCategoryTarget.url)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-[#1E40AF]/30 bg-blue-50/70 text-xs font-medium text-[#1E40AF] hover:bg-blue-100/70 cursor-pointer"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>{returnToCategoryTarget.label}</span>
+            </button>
             <button
               type="button"
               onClick={() => setShowLivePreview((v) => !v)}
@@ -572,6 +727,156 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                   />
                 </div>
               </div>
+
+              {/* Multiple Extra Media Links */}
+              <div className="space-y-3 pt-4 border-t border-slate-100">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <label className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                      <Link2 className="w-4 h-4 text-[#1E40AF]" />
+                      <span>روابط وسائط إضافية بالموضوع (اختياري — فيديو، صوت، عرض، PDF)</span>
+                    </label>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      يمكنك إضافة أكثر من رابط فيديو أو تسجيل صوتي أو وثيقة داخل نفس الموضوع لتظهر مرتبة تحت المشغل الرئيسي.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addExtraMediaSlot}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1E40AF]/10 text-[#1E40AF] text-xs font-medium hover:bg-[#1E40AF]/15 cursor-pointer shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>إضافة رابط وسائط إضافي</span>
+                  </button>
+                </div>
+
+                {extraMediaItems.length > 0 && (
+                  <div className="space-y-3">
+                    {extraMediaItems.map((media, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2.5"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+                            <span className="w-5 h-5 rounded-md bg-[#1E40AF] text-white inline-flex items-center justify-center font-mono text-[11px]">
+                              {idx + 2}
+                            </span>
+                            <span>وسيط إضافي رقم {idx + 2}</span>
+                          </span>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => moveExtraMediaSlot(idx, -1)}
+                              title="تقديم للأعلى"
+                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-[#1E40AF] disabled:opacity-35 cursor-pointer disabled:cursor-default"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === extraMediaItems.length - 1}
+                              onClick={() => moveExtraMediaSlot(idx, 1)}
+                              title="تأخير للأسفل"
+                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-[#1E40AF] disabled:opacity-35 cursor-pointer disabled:cursor-default"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                            <ConfirmDeleteDropdown
+                              title="تأكيد المسح"
+                              message={`هل تريد مسح الرابط الإضافي رقم ${idx + 2}؟`}
+                              confirmLabel="نعم، مسح"
+                              onConfirm={() => removeExtraMediaSlot(idx)}
+                              renderTrigger={({ onClick }) => (
+                                <button
+                                  type="button"
+                                  onClick={onClick}
+                                  title="مسح الرابط الإضافي"
+                                  className="p-1.5 rounded-lg border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <input
+                            type="text"
+                            value={media.title}
+                            onChange={(e) =>
+                              setExtraMediaItems((prev) =>
+                                prev.map((m, i) => (i === idx ? { ...m, title: e.target.value } : m))
+                              )
+                            }
+                            placeholder="عنوان هذا الجزء أو الرابط (اختياري)"
+                            className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs text-slate-900"
+                          />
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <select
+                              value={media.source_method}
+                              onChange={(e) => {
+                                const nextMethod = e.target.value as SourceMethod;
+                                setExtraMediaItems((prev) =>
+                                  prev.map((m, i) => {
+                                    if (i !== idx) return m;
+                                    const parsed = m.original_url.trim()
+                                      ? parseMediaUrlClient(m.original_url, nextMethod, m.content_type)
+                                      : null;
+                                    return {
+                                      ...m,
+                                      source_method: nextMethod,
+                                      embed_url: parsed?.valid ? parsed.embedUrl : m.embed_url,
+                                    };
+                                  })
+                                );
+                              }}
+                              aria-label="مصدر الرابط الإضافي"
+                              className="px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs text-slate-900"
+                            >
+                              <option value="youtube">YouTube</option>
+                              <option value="gdrive">Google Drive</option>
+                              <option value="direct">رابط مباشر</option>
+                              <option value="project_bundle">مستند/مشروع</option>
+                            </select>
+
+                            <select
+                              value={media.content_type}
+                              onChange={(e) => {
+                                const nextType = e.target.value as ContentType;
+                                setExtraMediaItems((prev) =>
+                                  prev.map((m, i) => (i === idx ? { ...m, content_type: nextType } : m))
+                                );
+                              }}
+                              aria-label="نوع المحتوى الإضافي"
+                              className="px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs text-slate-900"
+                            >
+                              {Object.entries(CONTENT_TYPE_LABELS).map(([k, label]) => (
+                                <option key={k} value={k}>
+                                  {label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <input
+                          type="text"
+                          dir="ltr"
+                          value={media.original_url}
+                          onChange={(e) => updateExtraMediaUrl(idx, e.target.value)}
+                          placeholder="الصق رابط YouTube أو Google Drive أو رابط MP3 / MP4 / PDF مباشرة..."
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs text-slate-900 text-left focus:outline-none focus:ring-2 focus:ring-[#1E40AF]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </section>
 
             {/* Step 2: Metadata */}
@@ -702,6 +1007,20 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                     className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm text-slate-900"
                   />
                 </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                    الرقم الترتيبي في المنصة (الأصغر يظهر أولاً)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={sortOrder}
+                    onChange={(e) => setSortOrder(e.target.value)}
+                    placeholder="تلقائي أو أدخل 1، 2، 3..."
+                    className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm text-slate-900 tabular-nums"
+                  />
+                </div>
               </div>
 
               {/* Thumbnail URL + Presets */}
@@ -740,7 +1059,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                         alt="معاينة الصورة المصغرة"
                         referrerPolicy="no-referrer"
                         onError={() => setThumbError(true)}
-                        className="w-full max-h-44 object-cover rounded-lg border border-slate-200"
+                        className="w-full max-h-56 object-contain bg-white p-1 rounded-lg border border-slate-200"
                       />
                     )}
                   </div>
@@ -764,21 +1083,117 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                 </div>
               </div>
 
-              {(contentType === 'project' || contentType === 'image') && (
-                <div className="space-y-2 pt-2 border-t border-slate-100">
-                  <label className="block text-sm font-medium text-slate-700">
-                    صور إضافية للمعرض أو المشروع (رابط في كل سطر — اختياري)
-                  </label>
-                  <textarea
-                    rows={3}
-                    dir="ltr"
-                    value={galleryUrlsText}
-                    onChange={(e) => setGalleryUrlsText(e.target.value)}
-                    placeholder="/src/assets/images/thumb_science_solar_1795563099401.jpg"
-                    className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-xs text-slate-900 text-left"
-                  />
+              {/* Always-available Structured Multi-Image Slots (Google Drive or Direct URLs) */}
+              <div className="space-y-3 pt-3 border-t border-slate-100">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <label className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                      <ImageIcon className="w-4 h-4 text-[#1E40AF]" />
+                      <span>صور مرفقة ومنسقة بالموضوع (اختياري — من Google Drive أو روابط مباشرة)</span>
+                    </label>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      أضف روابط الصور في الأماكن المخصصة ورتبها بالأزرار لتظهر منسقة ومرتبة داخل صفحة الموضوع.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setGalleryItems((prev) => [...prev, ''])}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1E40AF]/10 text-[#1E40AF] text-xs font-medium hover:bg-[#1E40AF]/15 cursor-pointer shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>إضافة مكان صورة</span>
+                  </button>
                 </div>
-              )}
+
+                <div className="space-y-3">
+                  {galleryItems.map((rawUrl, idx) => {
+                    const resolved = normalizeImageUrl(rawUrl.trim());
+                    const hasValidUrl = isSafeUrl(resolved);
+
+                    return (
+                      <div
+                        key={idx}
+                        className="p-3 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2.5"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+                            <span className="w-5 h-5 rounded-md bg-[#1E40AF] text-white inline-flex items-center justify-center font-mono text-[11px]">
+                              {idx + 1}
+                            </span>
+                            <span>صورة {idx + 1}</span>
+                          </span>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => moveGallerySlot(idx, -1)}
+                              title="تقديم للأعلى"
+                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-[#1E40AF] disabled:opacity-35 cursor-pointer disabled:cursor-default"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === galleryItems.length - 1}
+                              onClick={() => moveGallerySlot(idx, 1)}
+                              title="تأخير للأسفل"
+                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-[#1E40AF] disabled:opacity-35 cursor-pointer disabled:cursor-default"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+
+                            <ConfirmDeleteDropdown
+                              title="تأكيد المسح"
+                              message={`هل تريد مسح خانة الصورة رقم ${idx + 1}؟`}
+                              confirmLabel="نعم، مسح"
+                              onConfirm={() => removeGallerySlot(idx)}
+                              renderTrigger={({ onClick }) => (
+                                <button
+                                  type="button"
+                                  onClick={onClick}
+                                  title="مسح مكان الصورة"
+                                  className="p-1.5 rounded-lg border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row gap-3 items-start">
+                          <input
+                            type="text"
+                            dir="ltr"
+                            value={rawUrl}
+                            onChange={(e) => {
+                              const nextVal = normalizeImageUrl(e.target.value);
+                              setGalleryItems((prev) =>
+                                prev.map((v, i) => (i === idx ? nextVal : v))
+                              );
+                            }}
+                            placeholder={`رابط الصورة ${idx + 1} (مثال: رابط مشاركة من Google Drive أو رابط مباشر)`}
+                            className="flex-1 w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs text-slate-900 text-left focus:outline-none focus:ring-2 focus:ring-[#1E40AF]"
+                          />
+
+                          {hasValidUrl && (
+                            <div className="w-28 h-20 rounded-lg border border-slate-200 bg-white p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                              <img
+                                key={resolved}
+                                src={resolved}
+                                alt={`معاينة صورة ${idx + 1}`}
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-contain rounded"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
               <label className="flex items-center gap-2.5 pt-2 cursor-pointer">
                 <input
@@ -815,18 +1230,36 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                   <Save className="w-4 h-4" />
                   <span>{status === 'published' ? 'إلغاء النشر وحفظ كمسودة' : 'حفظ كمسودة'}</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate(returnToCategoryTarget.url)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-700 text-sm font-medium hover:bg-slate-100 cursor-pointer"
+                >
+                  <ArrowRight className="w-4 h-4" />
+                  <span>العودة إلى التصنيف</span>
+                </button>
               </div>
 
               {editId && (
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => setConfirmDelete(true)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg border border-rose-200 text-rose-700 text-sm font-medium hover:bg-rose-50 cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span>حذف المحتوى</span>
-                </button>
+                <ConfirmDeleteDropdown
+                  title="تأكيد حذف الإنتاج"
+                  message={`هل أنت متأكد من حذف «${title || 'هذا الإنتاج'}» نهائياً؟`}
+                  confirmLabel="تأكيد الحذف"
+                  busy={saving}
+                  onConfirm={handleDelete}
+                  renderTrigger={({ onClick }) => (
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={onClick}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg border border-rose-200 text-rose-700 text-sm font-medium hover:bg-rose-50 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>حذف المحتوى</span>
+                    </button>
+                  )}
+                />
               )}
             </div>
           </div>
@@ -869,6 +1302,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                   originalUrl={originalUrl}
                   thumbnailUrl={thumbnailUrl}
                   galleryUrls={galleryUrlsArray}
+                  extraMedia={validExtraMediaPreview}
                   compact
                   isAdminPreview
                 />
@@ -883,35 +1317,6 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
           )}
         </div>
       </div>
-
-      {/* Delete Confirmation Modal */}
-      {confirmDelete && (
-        <div className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 space-y-4">
-            <h3 className="font-display text-lg font-bold text-slate-900">تأكيد حذف الإنتاج</h3>
-            <p className="text-sm text-slate-600">
-              هل أنت متأكد من حذف «{title}» نهائياً؟ لا يمكن التراجع عن هذا الإجراء.
-            </p>
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(false)}
-                className="px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer"
-              >
-                إلغاء
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={saving}
-                className="px-4 py-2 rounded-lg bg-rose-600 text-white text-sm font-medium hover:bg-rose-700 cursor-pointer"
-              >
-                تأكيد الحذف
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </AdminLayout>
   );
 }

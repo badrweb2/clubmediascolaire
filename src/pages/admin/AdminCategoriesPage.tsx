@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Check, Edit3, FolderPlus, Layers, Trash2, X } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { AdminLayout } from './AdminLayout.tsx';
+import { ConfirmDeleteDropdown } from '../../components/ConfirmDeleteDropdown.tsx';
 import type { Category } from '../../types.ts';
 
 export function AdminCategoriesPage() {
@@ -16,6 +17,7 @@ export function AdminCategoriesPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const [feedback, setFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(
     null
@@ -78,8 +80,9 @@ export function AdminCategoriesPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDeleteCategory = async (id: number) => {
     setFeedback(null);
+    setDeletingId(id);
     try {
       const res = await apiFetch<{ categories: Category[] }>(`/api/admin/categories/${id}`, {
         method: 'DELETE',
@@ -92,6 +95,8 @@ export function AdminCategoriesPage() {
         type: 'error',
         text: err instanceof Error ? err.message : 'تعذر حذف التصنيف.',
       });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -255,17 +260,26 @@ export function AdminCategoriesPage() {
                               setEditName(cat.name);
                               setEditDesc(cat.description);
                             }}
+                            title="تعديل التصنيف"
                             className="p-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer"
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(cat.id)}
-                            className="p-1.5 rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50 cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <ConfirmDeleteDropdown
+                            message={`هل تريد حذف التصنيف «${cat.name}»؟`}
+                            busy={deletingId === cat.id}
+                            onConfirm={() => handleDeleteCategory(cat.id)}
+                            renderTrigger={({ onClick }) => (
+                              <button
+                                type="button"
+                                onClick={onClick}
+                                title="حذف التصنيف"
+                                className="p-1.5 rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50 cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          />
                         </div>
                       </>
                     )}
@@ -318,17 +332,26 @@ export function AdminCategoriesPage() {
                                     setEditName(sub.name);
                                     setEditDesc(sub.description);
                                   }}
+                                  title="تعديل التصنيف الفرعي"
                                   className="p-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDelete(sub.id)}
-                                  className="p-1 rounded border border-rose-200 text-rose-600 hover:bg-rose-50 cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                <ConfirmDeleteDropdown
+                                  message={`هل تريد حذف التصنيف الفرعي «${sub.name}»؟`}
+                                  busy={deletingId === sub.id}
+                                  onConfirm={() => handleDeleteCategory(sub.id)}
+                                  renderTrigger={({ onClick }) => (
+                                    <button
+                                      type="button"
+                                      onClick={onClick}
+                                      title="حذف التصنيف الفرعي"
+                                      className="p-1 rounded border border-rose-200 text-rose-600 hover:bg-rose-50 cursor-pointer"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                />
                               </div>
                             </>
                           )}

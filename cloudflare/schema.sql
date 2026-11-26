@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS work_items (
   media_mime TEXT NOT NULL DEFAULT '',
   thumbnail_url TEXT NOT NULL DEFAULT '',
   gallery_urls TEXT NOT NULL DEFAULT '[]',
+  extra_media TEXT NOT NULL DEFAULT '[]',
   category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
   subcategory_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
   keywords TEXT NOT NULL DEFAULT '',
@@ -51,6 +52,7 @@ CREATE TABLE IF NOT EXISTS work_items (
   embed_status TEXT NOT NULL DEFAULT 'ok',
   embed_note TEXT NOT NULL DEFAULT '',
   views_count INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   is_sample INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))

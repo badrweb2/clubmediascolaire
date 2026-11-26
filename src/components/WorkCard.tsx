@@ -51,9 +51,9 @@ export function WorkCard({ item }: { item: WorkItem }) {
       }}
       tabIndex={0}
       role="button"
-      className="group bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col cursor-pointer transition-all duration-200 hover:border-slate-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E40AF]"
+      className="group bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:border-[#1E40AF]/40 hover:shadow-md active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E40AF]"
     >
-      <div className="relative aspect-[16/10] bg-slate-100 overflow-hidden">
+      <div className="relative aspect-[16/10] bg-slate-50 overflow-hidden flex items-center justify-center p-1.5 border-b border-slate-100">
         {hasThumb ? (
           <img
             key={resolvedThumb}
@@ -61,7 +61,7 @@ export function WorkCard({ item }: { item: WorkItem }) {
             alt={item.title}
             referrerPolicy="no-referrer"
             onError={() => setImgFailed(true)}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+            className="w-full h-full object-contain rounded transition-transform duration-500 ease-out group-hover:scale-105"
           />
         ) : (
           <div className="w-full h-full bg-gradient-to-br from-slate-100 to-slate-200 flex flex-col items-center justify-center p-4 text-slate-500">

@@ -21,6 +21,47 @@
   }
 }
 
+@keyframes heroAutoZoom {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.07);
+  }
+}
+
+@keyframes gentleFadeUp {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes subtlePulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(30, 64, 175, 0.14);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(30, 64, 175, 0);
+  }
+}
+
+.animate-hero-zoom {
+  animation: heroAutoZoom 16s ease-in-out infinite;
+}
+
+.animate-fade-up {
+  animation: gentleFadeUp 0.55s ease-out both;
+}
+
+.animate-subtle-glow {
+  animation: subtlePulseGlow 3.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

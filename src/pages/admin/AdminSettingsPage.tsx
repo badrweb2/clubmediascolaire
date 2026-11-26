@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { AdminLayout } from './AdminLayout.tsx';
+import { ConfirmDeleteDropdown } from '../../components/ConfirmDeleteDropdown.tsx';
 import { isSafeUrl, normalizeImageUrl } from '../../lib/mediaUtils.ts';
 import {
   DEFAULT_PLATFORM_SETTINGS,
@@ -437,7 +438,7 @@ export function AdminSettingsPage() {
                       تسميات أزرار القائمة الرئيسية
                     </h2>
                     <p className="text-xs text-slate-500 mt-1">
-                      تخصيص أسماء الروابط السبعة الظاهرة في الشريط العلوي للمنصة.
+                      تخصيص أسماء الأزرار العشرة الظاهرة في الشريط العلوي للمنصة.
                     </p>
                   </div>
 
@@ -451,6 +452,9 @@ export function AdminSettingsPage() {
                         ['nav_projects_label', 'الزر الخامس (مشاريع)'],
                         ['nav_activities_label', 'الزر السادس (أنشطة)'],
                         ['nav_works_label', 'الزر السابع (إنتاجات)'],
+                        ['nav_presentations_label', 'الزر الثامن (عروض)'],
+                        ['nav_competitions_label', 'الزر التاسع (مسابقات)'],
+                        ['nav_designs_label', 'الزر العاشر (إبداعات)'],
                       ] as Array<[keyof PlatformSettings, string]>
                     ).map(([key, label]) => (
                       <div key={key}>
@@ -710,16 +714,22 @@ export function AdminSettingsPage() {
                           <span className="text-xs font-semibold text-slate-600">
                             السؤال {idx + 1}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() =>
+                          <ConfirmDeleteDropdown
+                            message={`هل تريد مسح السؤال رقم ${idx + 1}؟`}
+                            onConfirm={() =>
                               setFaqItems((prev) => prev.filter((_, i) => i !== idx))
                             }
-                            className="inline-flex items-center gap-1 text-xs text-rose-700 hover:underline cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>حذف</span>
-                          </button>
+                            renderTrigger={({ onClick }) => (
+                              <button
+                                type="button"
+                                onClick={onClick}
+                                className="inline-flex items-center gap-1 text-xs text-rose-700 hover:underline cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>حذف</span>
+                              </button>
+                            )}
+                          />
                         </div>
                         <input
                           type="text"
