@@ -20,6 +20,7 @@ import {
   CONTENT_TYPE_LABELS,
   GRADE_LEVELS,
   isSafeUrl,
+  normalizeImageUrl,
   parseMediaUrlClient,
 } from '../../lib/mediaUtils.ts';
 import type {
@@ -94,6 +95,16 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
   );
   const [showLivePreview, setShowLivePreview] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
+
+  const resolvedThumbnailUrl = useMemo(
+    () => normalizeImageUrl(thumbnailUrl),
+    [thumbnailUrl]
+  );
+
+  useEffect(() => {
+    setThumbError(false);
+  }, [resolvedThumbnailUrl]);
 
   useEffect(() => {
     apiFetch<{ categories: Category[] }>('/api/admin/categories')
@@ -223,7 +234,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
     () =>
       galleryUrlsText
         .split('\n')
-        .map((line) => line.trim())
+        .map((line) => normalizeImageUrl(line.trim()))
         .filter((line) => isSafeUrl(line)),
     [galleryUrlsText]
   );
@@ -264,7 +275,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
         original_url: originalUrl.trim(),
         embed_url: embedUrl.trim() || originalUrl.trim(),
         media_mime: mediaMime,
-        thumbnail_url: thumbnailUrl.trim(),
+        thumbnail_url: normalizeImageUrl(thumbnailUrl.trim()),
         gallery_urls: galleryUrlsArray,
         category_id: categoryId,
         subcategory_id: subcategoryId ? Number(subcategoryId) : null,
@@ -702,10 +713,39 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                   type="text"
                   dir="ltr"
                   value={thumbnailUrl}
-                  onChange={(e) => setThumbnailUrl(e.target.value)}
-                  placeholder="https://... أو اختر من الصور الجاهزة أدناه"
+                  onChange={(e) => setThumbnailUrl(normalizeImageUrl(e.target.value))}
+                  placeholder="https://... أو رابط مشاركة صورة من Google Drive"
                   className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm text-slate-900 text-left"
                 />
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  عند استخدام صورة من Google Drive، تأكد أن إعداد مشاركتها هو:{' '}
+                  <strong>أي شخص لديه الرابط ← عارض (Viewer)</strong>.
+                </p>
+
+                {isSafeUrl(resolvedThumbnailUrl) && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5">
+                    {thumbError ? (
+                      <div className="flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>
+                          تعذر عرض الصورة المصغرة. إذا كانت من Google Drive، افتحها في Drive ثم غيّر
+                          صلاحية المشاركة إلى <strong>أي شخص لديه الرابط (Anyone with the link)</strong>{' '}
+                          بصفة <strong>عارض (Viewer)</strong>.
+                        </span>
+                      </div>
+                    ) : (
+                      <img
+                        key={resolvedThumbnailUrl}
+                        src={resolvedThumbnailUrl}
+                        alt="معاينة الصورة المصغرة"
+                        referrerPolicy="no-referrer"
+                        onError={() => setThumbError(true)}
+                        className="w-full max-h-44 object-cover rounded-lg border border-slate-200"
+                      />
+                    )}
+                  </div>
+                )}
+
                 <div className="flex flex-wrap gap-2 pt-1">
                   {PRESET_THUMBNAILS.map((preset) => (
                     <button

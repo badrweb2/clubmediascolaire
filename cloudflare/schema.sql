@@ -55,3 +55,12 @@ CREATE TABLE IF NOT EXISTS work_items (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS platform_visits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  visit_date TEXT NOT NULL DEFAULT (date('now')),
+  path TEXT NOT NULL DEFAULT '/',
+  visitor_hash TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+

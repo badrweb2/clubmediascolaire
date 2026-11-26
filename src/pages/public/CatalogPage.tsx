@@ -6,7 +6,7 @@ import { CONTENT_TYPE_LABELS, GRADE_LEVELS } from '../../lib/mediaUtils.ts';
 import type { ContentType, WorkItem } from '../../types.ts';
 
 interface CatalogPageProps {
-  mode: 'all' | 'videos' | 'audio' | 'gallery' | 'projects';
+  mode: 'all' | 'videos' | 'audio' | 'innovations' | 'projects' | 'activities' | 'gallery';
 }
 
 const MODE_META: Record<
@@ -15,7 +15,7 @@ const MODE_META: Record<
 > = {
   all: {
     title: 'جميع الإنتاجات الطلابية',
-    subtitle: 'ابحث واستكشف جميع الفيديوهات، التسجيلات الإذاعية، اللوحات الفنية، والمشاريع المدرسية.',
+    subtitle: 'ابحث واستكشف جميع الفيديوهات، التسجيلات الإذاعية، الابتكارات، الأنشطة، والمشاريع المدرسية.',
   },
   videos: {
     title: 'ركن الفيديوهات والإنتاجات المرئية',
@@ -27,26 +27,36 @@ const MODE_META: Record<
     subtitle: 'حلقات الإذاعة الصباحية، البودكاست الطلابي، والقراءات الصوتية للاستماع المباشر.',
     lockedType: 'audio',
   },
+  innovations: {
+    title: 'ركن الابتكارات ونادي العلوم والروبوتيك',
+    subtitle: 'مبادرات التلاميذ في الروبوتيك، البرمجة، الطاقة المتجددة، والابتكارات العلمية.',
+  },
+  projects: {
+    title: 'صفحة المشاريع المدرسية والبحوث',
+    subtitle: 'المشاريع العلمية والتربوية، المجلات الرقمية، والعروض التقديمية للتلاميذ.',
+  },
+  activities: {
+    title: 'ركن الأنشطة الثقافية والفنية والتربوية',
+    subtitle: 'فعاليات الأندية التربوية، المعارض الفنية، المسابقات المدرسية، وإبداعات التلاميذ.',
+  },
   gallery: {
     title: 'معرض الصور والإبداعات الفنية',
     subtitle: 'لوحات تشكيلية، خطوط وزخارف، وتوثيق فوتوغرافي لإبداعات المتعلمين.',
     lockedType: 'image',
   },
-  projects: {
-    title: 'صفحة المشاريع المدرسية والبحوث',
-    subtitle: 'المشاريع العلمية والابتكارات، المجلات الرقمية، والعروض التقديمية للتلاميذ.',
-  },
 };
 
 export function CatalogPage({ mode }: CatalogPageProps) {
-  const { searchParams, categories } = useApp();
+  const { searchParams, categories, navigate } = useApp();
   const meta = MODE_META[mode];
 
   const [query, setQuery] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>(
     () => searchParams.get('categoryId') || ''
   );
-  const [selectedType, setSelectedType] = useState<string>(meta.lockedType || '');
+  const [selectedType, setSelectedType] = useState<string>(
+    () => meta.lockedType || searchParams.get('contentType') || ''
+  );
   const [selectedGrade, setSelectedGrade] = useState<string>('');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [sort, setSort] = useState<string>(() => searchParams.get('sort') || 'newest');
@@ -55,14 +65,53 @@ export function CatalogPage({ mode }: CatalogPageProps) {
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Sync mode changes cleanly
+  const searchKey = searchParams.toString();
+
+  // Sync mode and URL query changes cleanly
   useEffect(() => {
-    setSelectedType(meta.lockedType || '');
-    const catParam = searchParams.get('categoryId');
-    if (catParam) setSelectedCategoryId(catParam);
-    const sortParam = searchParams.get('sort');
-    if (sortParam) setSort(sortParam);
-  }, [mode, meta.lockedType, searchParams]);
+    const params = new URLSearchParams(searchKey);
+    setSelectedType(meta.lockedType || params.get('contentType') || '');
+    setSelectedCategoryId(params.get('categoryId') || '');
+    setSort(params.get('sort') || 'newest');
+  }, [mode, meta.lockedType, searchKey]);
+
+  const innovationCategoryIds = useMemo(() => {
+    const ids = new Set<number>();
+    const innovationMain = categories.find(
+      (c) => c.slug === 'projects' || c.name.includes('ابتكار')
+    );
+    if (innovationMain) ids.add(innovationMain.id);
+    for (const c of categories) {
+      if (
+        c.slug === 'projects-robotics' ||
+        c.slug === 'projects-environment' ||
+        c.slug === 'videos-science' ||
+        c.name.includes('ابتكار') ||
+        c.name.includes('روبوت') ||
+        c.name.includes('علمي')
+      ) {
+        ids.add(c.id);
+      }
+    }
+    return ids;
+  }, [categories]);
+
+  const activityCategoryIds = useMemo(() => {
+    const ids = new Set<number>();
+    const mainSlugs = new Set([
+      'cultural-activities',
+      'arts-photos',
+      'competitions',
+      'student-creations',
+    ]);
+    for (const c of categories) {
+      if (mainSlugs.has(c.slug)) ids.add(c.id);
+    }
+    for (const c of categories) {
+      if (c.parent_id && ids.has(c.parent_id)) ids.add(c.id);
+    }
+    return ids;
+  }, [categories]);
 
   useEffect(() => {
     let active = true;
@@ -81,12 +130,27 @@ export function CatalogPage({ mode }: CatalogPageProps) {
         .then((res: { items?: WorkItem[] }) => {
           if (!active) return;
           let list = res.items || [];
-          if (mode === 'projects' && !selectedType) {
+          if (mode === 'projects' && !selectedType && !selectedCategoryId) {
             list = list.filter(
               (item) =>
                 item.content_type === 'project' ||
                 item.content_type === 'pdf' ||
                 item.content_type === 'presentation'
+            );
+          } else if (mode === 'innovations' && !selectedType && !selectedCategoryId) {
+            list = list.filter(
+              (item) =>
+                item.content_type === 'project' ||
+                innovationCategoryIds.has(item.category_id) ||
+                (item.subcategory_id ? innovationCategoryIds.has(item.subcategory_id) : false) ||
+                /ابتكار|روبوت|طاقة|برمجة/.test(`${item.title} ${item.keywords}`)
+            );
+          } else if (mode === 'activities' && !selectedType && !selectedCategoryId) {
+            list = list.filter(
+              (item) =>
+                item.content_type === 'image' ||
+                activityCategoryIds.has(item.category_id) ||
+                (item.subcategory_id ? activityCategoryIds.has(item.subcategory_id) : false)
             );
           }
           setItems(list);
@@ -97,18 +161,58 @@ export function CatalogPage({ mode }: CatalogPageProps) {
         .finally(() => {
           if (active) setLoading(false);
         });
-    }, 140);
+    }, 120);
 
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [query, selectedCategoryId, selectedType, selectedGrade, dateFrom, sort, mode]);
+  }, [
+    query,
+    selectedCategoryId,
+    selectedType,
+    selectedGrade,
+    dateFrom,
+    sort,
+    mode,
+    innovationCategoryIds,
+    activityCategoryIds,
+  ]);
 
   const mainCategories = useMemo(
     () => categories.filter((c) => c.parent_id === null),
     [categories]
   );
+
+  const activeCategoryObj = useMemo(
+    () => categories.find((c) => String(c.id) === selectedCategoryId) || null,
+    [categories, selectedCategoryId]
+  );
+
+  const activeMainCategory = useMemo(() => {
+    if (!activeCategoryObj) return null;
+    if (activeCategoryObj.parent_id === null) return activeCategoryObj;
+    return categories.find((c) => c.id === activeCategoryObj.parent_id) || null;
+  }, [categories, activeCategoryObj]);
+
+  const relatedSubcategories = useMemo(() => {
+    if (activeMainCategory) {
+      return categories.filter((c) => c.parent_id === activeMainCategory.id);
+    }
+    if (mode === 'audio') {
+      const radioCat = categories.find((c) => c.slug === 'audio-radio');
+      return radioCat ? categories.filter((c) => c.parent_id === radioCat.id) : [];
+    }
+    if (mode === 'videos') {
+      const vidCat = categories.find((c) => c.slug === 'videos');
+      return vidCat ? categories.filter((c) => c.parent_id === vidCat.id) : [];
+    }
+    if (mode === 'innovations' || mode === 'projects') {
+      const projCat = categories.find((c) => c.slug === 'projects');
+      return projCat ? categories.filter((c) => c.parent_id === projCat.id) : [];
+    }
+    return [];
+  }, [categories, activeMainCategory, mode]);
 
   const resetFilters = () => {
     setQuery('');
@@ -117,6 +221,16 @@ export function CatalogPage({ mode }: CatalogPageProps) {
     setSelectedGrade('');
     setDateFrom('');
     setSort('newest');
+    if (mode === 'all') {
+      navigate('/works');
+    }
+  };
+
+  const handleSelectCategory = (catId: string) => {
+    setSelectedCategoryId(catId);
+    if (mode === 'all') {
+      navigate(catId ? `/works?categoryId=${catId}` : '/works');
+    }
   };
 
   return (
@@ -125,18 +239,101 @@ export function CatalogPage({ mode }: CatalogPageProps) {
       <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div className="space-y-2">
+            {activeMainCategory && (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs sm:text-sm text-slate-500">
+                <button
+                  type="button"
+                  onClick={() => handleSelectCategory('')}
+                  className="hover:text-[#1E40AF] hover:underline cursor-pointer"
+                >
+                  جميع التصنيفات
+                </button>
+                <span aria-hidden="true">/</span>
+                <button
+                  type="button"
+                  onClick={() => handleSelectCategory(String(activeMainCategory.id))}
+                  className={`hover:underline cursor-pointer ${
+                    activeCategoryObj?.id === activeMainCategory.id
+                      ? 'font-semibold text-[#1E40AF]'
+                      : 'text-slate-700 hover:text-[#1E40AF]'
+                  }`}
+                >
+                  {activeMainCategory.name}
+                </button>
+                {activeCategoryObj && activeCategoryObj.id !== activeMainCategory.id && (
+                  <>
+                    <span aria-hidden="true">/</span>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectCategory(String(activeCategoryObj.id))}
+                      className="font-semibold text-[#1E40AF] hover:underline cursor-pointer"
+                    >
+                      {activeCategoryObj.name}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
             <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900">
-              {meta.title}
+              {activeCategoryObj ? activeCategoryObj.name : meta.title}
             </h1>
-            <p className="text-sm sm:text-base text-slate-600 max-w-2xl">{meta.subtitle}</p>
+            <p className="text-sm sm:text-base text-slate-600 max-w-2xl">
+              {activeCategoryObj?.description || meta.subtitle}
+            </p>
           </div>
           <div className="text-xs font-mono tabular-nums text-slate-500 shrink-0">
             النتائج المعروضة: <strong className="text-slate-900">{items.length}</strong>
           </div>
         </div>
 
+        {/* Clickable Category / Subcategory Quick Links */}
+        {(relatedSubcategories.length > 0 || (mode === 'all' && !activeMainCategory && mainCategories.length > 0)) && (
+          <div className="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2">
+            {activeMainCategory && (
+              <button
+                type="button"
+                onClick={() => handleSelectCategory(String(activeMainCategory.id))}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
+                  selectedCategoryId === String(activeMainCategory.id)
+                    ? 'bg-[#1E40AF] text-white border-[#1E40AF]'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                الكل في {activeMainCategory.name}
+              </button>
+            )}
+            {relatedSubcategories.map((sub) => (
+              <button
+                key={sub.id}
+                type="button"
+                onClick={() => handleSelectCategory(String(sub.id))}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
+                  selectedCategoryId === String(sub.id)
+                    ? 'bg-[#1E40AF] text-white border-[#1E40AF]'
+                    : 'bg-white text-slate-700 border-slate-200 hover:border-[#1E40AF] hover:text-[#1E40AF]'
+                }`}
+              >
+                {sub.name}
+              </button>
+            ))}
+            {mode === 'all' &&
+              !activeMainCategory &&
+              mainCategories.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => handleSelectCategory(String(cat.id))}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs font-medium text-slate-700 hover:border-[#1E40AF] hover:text-[#1E40AF] transition-colors cursor-pointer"
+                >
+                  {cat.name}
+                </button>
+              ))}
+          </div>
+        )}
+
         {/* Instant Search & Filter Controls */}
-        <div className="mt-6 pt-6 border-t border-slate-200 space-y-4">
+        <div className="mt-5 pt-5 border-t border-slate-200 space-y-4">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -182,7 +379,7 @@ export function CatalogPage({ mode }: CatalogPageProps) {
                 </label>
                 <select
                   value={selectedCategoryId}
-                  onChange={(e) => setSelectedCategoryId(e.target.value)}
+                  onChange={(e) => handleSelectCategory(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm text-slate-800"
                 >
                   <option value="">جميع التصنيفات</option>

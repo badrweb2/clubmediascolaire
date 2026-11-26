@@ -17,7 +17,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import type { ContentType, SourceMethod } from '../types.ts';
-import { isSafeUrl } from '../lib/mediaUtils.ts';
+import { isSafeUrl, normalizeImageUrl } from '../lib/mediaUtils.ts';
 
 interface MediaPlayerProps {
   title: string;
@@ -56,12 +56,19 @@ export function AudioRadioPlayer({
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [error, setError] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
+
+  const resolvedThumb = thumbnailUrl ? normalizeImageUrl(thumbnailUrl) : '';
 
   useEffect(() => {
     setPlaying(false);
     setCurrentTime(0);
     setError(false);
   }, [src]);
+
+  useEffect(() => {
+    setThumbError(false);
+  }, [resolvedThumb]);
 
   const togglePlay = async () => {
     const el = audioRef.current;
@@ -116,19 +123,25 @@ export function AudioRadioPlayer({
       />
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
-        {thumbnailUrl && isSafeUrl(thumbnailUrl) ? (
-          <img
-            src={thumbnailUrl}
-            alt={title}
-            referrerPolicy="no-referrer"
+        {resolvedThumb && isSafeUrl(resolvedThumb) && !thumbError ? (
+          <div
             className={`${
-              compact ? 'w-16 h-16' : 'w-24 h-24'
-            } rounded-lg object-cover border border-slate-200 shrink-0`}
-          />
+              compact ? 'w-28 h-20' : 'w-full sm:w-44 h-28'
+            } rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center overflow-hidden p-1 shrink-0`}
+          >
+            <img
+              key={resolvedThumb}
+              src={resolvedThumb}
+              alt={title}
+              referrerPolicy="no-referrer"
+              onError={() => setThumbError(true)}
+              className="w-full h-full object-contain rounded"
+            />
+          </div>
         ) : (
           <div
             className={`${
-              compact ? 'w-16 h-16' : 'w-24 h-24'
+              compact ? 'w-24 h-20' : 'w-28 h-24'
             } rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-[#1E40AF] shrink-0`}
           >
             <Volume2 className="w-7 h-7" />
@@ -233,7 +246,7 @@ export function InteractiveImageGallery({
   images: string[];
   title: string;
 }) {
-  const safeImages = images.filter(isSafeUrl);
+  const safeImages = images.map(normalizeImageUrl).filter(isSafeUrl);
   const [activeIndex, setActiveIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -502,7 +515,11 @@ export function MediaPlayer({
         ) : (
           <video
             src={safeEmbed}
-            poster={thumbnailUrl && isSafeUrl(thumbnailUrl) ? thumbnailUrl : undefined}
+            poster={
+              thumbnailUrl && isSafeUrl(normalizeImageUrl(thumbnailUrl))
+                ? normalizeImageUrl(thumbnailUrl)
+                : undefined
+            }
             controls
             playsInline
             preload="metadata"

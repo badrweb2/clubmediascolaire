@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
 import { Menu, Search, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
-import { isSafeUrl } from '../lib/mediaUtils.ts';
+import { isSafeUrl, normalizeImageUrl } from '../lib/mediaUtils.ts';
 
 export function VisitorHeader() {
   const { pathname, navigate, settings } = useApp();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const navLinks = [
-    { label: 'الرئيسية', path: '/' },
-    { label: 'الفيديوهات', path: '/videos' },
-    { label: 'الإذاعة', path: '/audio' },
-    { label: 'المعرض الفني', path: '/gallery' },
-    { label: 'المشاريع', path: '/projects' },
+    { label: settings.nav_home_label || 'الرئيسية', path: '/' },
+    { label: settings.nav_videos_label || 'الفيديوهات', path: '/videos' },
+    { label: settings.nav_audio_label || 'الإذاعة المدرسية', path: '/audio' },
+    { label: settings.nav_innovations_label || 'ابتكارات', path: '/innovations' },
+    { label: settings.nav_projects_label || 'مشاريع', path: '/projects' },
+    { label: settings.nav_activities_label || 'أنشطة', path: '/activities' },
+    { label: settings.nav_works_label || 'إنتاجات', path: '/works' },
   ];
 
   const handleNav = (path: string) => {
@@ -20,33 +22,38 @@ export function VisitorHeader() {
     setMobileOpen(false);
   };
 
+  const accentColor = settings.primary_color || '#1E40AF';
+
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200">
-      <div className="max-w-[1240px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-8">
-        {/* Zone 1: Brand (Logo transparent without white bg + single-line school title) */}
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        {/* Brand */}
         <a
           href="/"
           onClick={(e) => {
             e.preventDefault();
             handleNav('/');
           }}
-          className="flex items-center gap-3 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E40AF] rounded-lg py-1"
+          className="flex items-center gap-2.5 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E40AF] rounded-lg py-1"
         >
-          {isSafeUrl(settings.logo_url) && (
+          {isSafeUrl(normalizeImageUrl(settings.logo_url)) && (
             <img
-              src={settings.logo_url}
+              src={normalizeImageUrl(settings.logo_url)}
               alt={settings.school_name}
               referrerPolicy="no-referrer"
               className="h-10 w-auto object-contain mix-blend-multiply shrink-0"
             />
           )}
-          <span className="font-display text-base sm:text-lg font-bold text-slate-900 tracking-tight whitespace-nowrap shrink-0">
+          <span className="font-display text-sm sm:text-base font-bold text-slate-900 tracking-tight whitespace-nowrap shrink-0">
             {settings.school_name}
           </span>
         </a>
 
-        {/* Zone 2: 5 concise single-line navigation links */}
-        <nav className="hidden lg:flex items-center gap-7 text-sm font-medium text-slate-600">
+        {/* Main Navigation: 7 Requested Single-Line Links */}
+        <nav
+          aria-label="التنقل الرئيسي"
+          className="hidden lg:flex items-center gap-4 xl:gap-6 text-sm font-medium text-slate-600"
+        >
           {navLinks.map((link) => {
             const active = pathname === link.path;
             return (
@@ -57,30 +64,33 @@ export function VisitorHeader() {
                   e.preventDefault();
                   handleNav(link.path);
                 }}
+                style={active ? { color: accentColor } : undefined}
                 className={`relative py-1 whitespace-nowrap shrink-0 transition-colors ${
-                  active
-                    ? 'text-[#1E40AF] font-semibold'
-                    : 'text-slate-600 hover:text-slate-900'
+                  active ? 'font-semibold' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 {link.label}
                 {active && (
-                  <span className="absolute inset-x-0 -bottom-[21px] h-0.5 bg-[#1E40AF]" />
+                  <span
+                    style={{ backgroundColor: accentColor }}
+                    className="absolute inset-x-0 -bottom-[21px] h-0.5"
+                  />
                 )}
               </a>
             );
           })}
         </nav>
 
-        {/* Zone 3: 1 Primary Action + mobile toggle */}
-        <div className="flex items-center gap-3 shrink-0">
+        {/* Quick Search Trigger + Mobile Toggle */}
+        <div className="flex items-center gap-2.5 shrink-0">
           <button
             type="button"
             onClick={() => handleNav('/works')}
-            className="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1E40AF] text-white text-xs sm:text-sm font-medium hover:bg-[#1E3A8A] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            style={{ backgroundColor: accentColor }}
+            className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-white text-xs font-medium hover:opacity-95 transition-opacity whitespace-nowrap shrink-0 cursor-pointer"
           >
-            <Search className="w-4 h-4" />
-            <span>جميع الإنتاجات</span>
+            <Search className="w-3.5 h-3.5" />
+            <span>بحث</span>
           </button>
 
           <button
@@ -96,7 +106,7 @@ export function VisitorHeader() {
 
       {/* Mobile Navigation Drawer */}
       {mobileOpen && (
-        <div className="lg:hidden bg-white border-t border-slate-200 px-4 py-4 space-y-2">
+        <div className="lg:hidden bg-white border-t border-slate-200 px-4 py-4 space-y-1.5">
           {navLinks.map((link) => {
             const active = pathname === link.path;
             return (
@@ -108,23 +118,13 @@ export function VisitorHeader() {
                   handleNav(link.path);
                 }}
                 className={`block px-3 py-2.5 rounded-lg text-sm font-medium ${
-                  active
-                    ? 'bg-[#1E40AF]/10 text-[#1E40AF]'
-                    : 'text-slate-700 hover:bg-slate-50'
+                  active ? 'bg-[#1E40AF]/10 text-[#1E40AF]' : 'text-slate-700 hover:bg-slate-50'
                 }`}
               >
                 {link.label}
               </a>
             );
           })}
-          <button
-            type="button"
-            onClick={() => handleNav('/works')}
-            className="w-full mt-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[#1E40AF] text-white text-sm font-medium cursor-pointer"
-          >
-            <Search className="w-4 h-4" />
-            <span>جميع الإنتاجات والبحث</span>
-          </button>
         </div>
       )}
     </header>

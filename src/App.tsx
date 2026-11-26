@@ -5,6 +5,7 @@ import { VisitorFooter } from './components/VisitorFooter.tsx';
 import { HomePage } from './pages/public/HomePage.tsx';
 import { CatalogPage } from './pages/public/CatalogPage.tsx';
 import { WorkDetailPage } from './pages/public/WorkDetailPage.tsx';
+import { AboutPage } from './pages/public/AboutPage.tsx';
 import { AdminLoginPage } from './pages/admin/AdminLoginPage.tsx';
 import { AdminDashboardPage } from './pages/admin/AdminDashboardPage.tsx';
 import { AdminWorkEditorPage } from './pages/admin/AdminWorkEditorPage.tsx';
@@ -88,10 +89,16 @@ function RouterView() {
     publicContent = <CatalogPage mode="videos" />;
   } else if (pathname === '/audio') {
     publicContent = <CatalogPage mode="audio" />;
-  } else if (pathname === '/gallery') {
-    publicContent = <CatalogPage mode="gallery" />;
+  } else if (pathname === '/innovations') {
+    publicContent = <CatalogPage mode="innovations" />;
   } else if (pathname === '/projects') {
     publicContent = <CatalogPage mode="projects" />;
+  } else if (pathname === '/activities') {
+    publicContent = <CatalogPage mode="activities" />;
+  } else if (pathname === '/gallery') {
+    publicContent = <CatalogPage mode="gallery" />;
+  } else if (pathname === '/about') {
+    publicContent = <AboutPage />;
   } else if (pathname.startsWith('/work/')) {
     const workId = Number(pathname.replace('/work/', ''));
     publicContent = <WorkDetailPage workId={Number.isInteger(workId) && workId > 0 ? workId : 0} />;

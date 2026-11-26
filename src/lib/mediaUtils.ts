@@ -125,6 +125,28 @@ export function extractGoogleDriveInfo(rawUrl: string): GoogleDriveParseResult |
   return null;
 }
 
+export function normalizeImageUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed || !isSafeUrl(trimmed)) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    const host = url.hostname.replace(/^www\./, '').toLowerCase();
+    if (host === 'drive.google.com' && url.pathname === '/thumbnail') {
+      const id = url.searchParams.get('id');
+      if (id && /^[a-zA-Z0-9_-]{10,}$/.test(id)) {
+        return `https://drive.google.com/thumbnail?id=${id}&sz=w1200`;
+      }
+    }
+  } catch {
+    return trimmed;
+  }
+  const drive = extractGoogleDriveInfo(trimmed);
+  if (drive && drive.kind === 'file') {
+    return `https://drive.google.com/thumbnail?id=${drive.fileId}&sz=w1200`;
+  }
+  return trimmed;
+}
+
 export function detectDirectFileType(rawUrl: string): {
   contentType: ContentType;
   mime: string;
@@ -230,7 +252,10 @@ export function parseMediaUrlClient(
       sourceMethod: 'gdrive',
       contentType: inferredType,
       embedUrl: drive.embedUrl,
-      thumbnailUrl: '',
+      thumbnailUrl:
+        inferredType === 'image'
+          ? `https://drive.google.com/thumbnail?id=${drive.fileId}&sz=w1200`
+          : '',
       mediaMime: 'text/html',
     };
   }

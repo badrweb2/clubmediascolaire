@@ -1,12 +1,15 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import type { AuthState, Category, PlatformSettings } from '../types.ts';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import type { AuthState, Category, PlatformSettings, PublicSiteStats } from '../types.ts';
+import { DEFAULT_PLATFORM_SETTINGS } from '../lib/settingsDefaults.ts';
 
 interface AppContextValue {
   pathname: string;
   searchParams: URLSearchParams;
   navigate: (to: string) => void;
+  lastPublicRoute: string | null;
   settings: PlatformSettings;
   categories: Category[];
+  siteStats: PublicSiteStats;
   refreshPublicBootstrap: () => Promise<void>;
   auth: AuthState;
   token: string | null;
@@ -16,25 +19,44 @@ interface AppContextValue {
   apiFetch: <T>(url: string, init?: RequestInit) => Promise<T>;
 }
 
-const DEFAULT_SETTINGS: PlatformSettings = {
-  school_name: 'مدرسة الحسن الداخل',
-  platform_title: 'المنصة التعليمية لمدرسة الحسن الداخل',
-  platform_tagline:
-    'معرض رقمي ومكتبة مدرسية تفاعلية لعرض وحفظ وتوثيق إنتاجات وإبداعات التلاميذ في العلوم والفنون والإذاعة والمشاريع التربوية.',
-  hero_cover_url: '/src/assets/images/hero_school_cover_1795563098821.jpg',
-  logo_url: '/assets/aistudio/LOGO_e619da1e.png',
-  academic_year: '2026 / 2027',
-  footer_note: 'جميع الحقوق محفوظة لمدرسة الحسن الداخل — معرض الإبداع الطلابي الرقمي',
+const DEFAULT_SITE_STATS: PublicSiteStats = {
+  total_site_visits: 0,
+  today_site_visits: 0,
+  unique_visitors: 0,
+  total_work_views: 0,
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
+
+function getOrCreateVisitorId(): string {
+  try {
+    const existing = window.localStorage.getItem('alhassan_visitor_id');
+    if (existing) return existing;
+    const next =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `v-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    window.localStorage.setItem('alhassan_visitor_id', next);
+    return next;
+  } catch {
+    return `v-${Date.now()}`;
+  }
+}
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [locationUrl, setLocationUrl] = useState<string>(
     () => window.location.pathname + window.location.search
   );
-  const [settings, setSettings] = useState<PlatformSettings>(DEFAULT_SETTINGS);
+  const [lastPublicRoute, setLastPublicRoute] = useState<string | null>(() => {
+    try {
+      return window.sessionStorage.getItem('alhassan_last_public_route');
+    } catch {
+      return null;
+    }
+  });
+  const [settings, setSettings] = useState<PlatformSettings>(DEFAULT_PLATFORM_SETTINGS);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [siteStats, setSiteStats] = useState<PublicSiteStats>(DEFAULT_SITE_STATS);
   const [token, setToken] = useState<string | null>(null);
   const [auth, setAuth] = useState<AuthState>({
     needsSetup: false,
@@ -42,6 +64,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     username: null,
     envManaged: false,
   });
+  const visitSentRef = useRef(false);
 
   useEffect(() => {
     const onPopState = () => {
@@ -53,6 +76,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const navigate = useCallback((to: string) => {
     const current = window.location.pathname + window.location.search;
+    if (
+      !window.location.pathname.startsWith('/admin') &&
+      !window.location.pathname.startsWith('/work/')
+    ) {
+      setLastPublicRoute(current);
+      try {
+        window.sessionStorage.setItem('alhassan_last_public_route', current);
+      } catch {
+        // ignore
+      }
+    }
     if (to !== current) {
       window.history.pushState({}, '', to);
       setLocationUrl(to);
@@ -90,9 +124,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const data = (await res.json()) as {
         settings?: PlatformSettings;
         categories?: Category[];
+        siteStats?: PublicSiteStats;
       };
       if (data.settings) setSettings(data.settings);
       if (data.categories) setCategories(data.categories);
+      if (data.siteStats) setSiteStats(data.siteStats);
     } catch {
       // ignore transient network errors
     }
@@ -118,6 +154,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     refreshPublicBootstrap();
     refreshAuthStatus();
   }, [refreshPublicBootstrap, refreshAuthStatus]);
+
+  // Record 1 real visit per browser session on public pages
+  useEffect(() => {
+    if (visitSentRef.current) return;
+    if (window.location.pathname.startsWith('/admin')) return;
+
+    let alreadySent = false;
+    try {
+      alreadySent = window.sessionStorage.getItem('alhassan_session_visit_sent') === '1';
+    } catch {
+      alreadySent = false;
+    }
+    if (alreadySent) {
+      visitSentRef.current = true;
+      return;
+    }
+
+    visitSentRef.current = true;
+    try {
+      window.sessionStorage.setItem('alhassan_session_visit_sent', '1');
+    } catch {
+      // ignore
+    }
+
+    const visitorId = getOrCreateVisitorId();
+    fetch('/api/public/visit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path: window.location.pathname || '/',
+        visitor_id: visitorId,
+      }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { siteStats?: PublicSiteStats } | null) => {
+        if (data?.siteStats) {
+          setSiteStats(data.siteStats);
+        }
+      })
+      .catch(() => {
+        // ignore transient network error
+      });
+  }, []);
 
   const setSession = useCallback((nextToken: string, username: string, envManaged = false) => {
     setToken(nextToken);
@@ -158,8 +237,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         pathname,
         searchParams,
         navigate,
+        lastPublicRoute,
         settings,
         categories,
+        siteStats,
         refreshPublicBootstrap,
         auth,
         token,

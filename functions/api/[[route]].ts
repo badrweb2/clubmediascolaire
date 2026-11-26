@@ -3,13 +3,20 @@ import {
   extractGoogleDriveInfo,
   extractYouTubeId,
   isSafeUrl,
+  normalizeImageUrl,
   parseMediaUrlClient,
 } from '../../src/lib/mediaUtils.ts';
+import {
+  DEFAULT_PLATFORM_SETTINGS,
+  SETTING_KEYS,
+  mergePlatformSettings,
+} from '../../src/lib/settingsDefaults.ts';
 import type {
   Category,
   ContentType,
   LinkInspectionResult,
   PlatformSettings,
+  PublicSiteStats,
   PublishStatus,
   SourceMethod,
   WorkItem,
@@ -233,21 +240,17 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS platform_visits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      visit_date TEXT NOT NULL DEFAULT (date('now')),
+      path TEXT NOT NULL DEFAULT '/',
+      visitor_hash TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`),
   ]);
 
-  const defaults: Record<string, string> = {
-    school_name: 'مدرسة الحسن الداخل',
-    platform_title: 'المنصة التعليمية لمدرسة الحسن الداخل',
-    platform_tagline:
-      'معرض رقمي ومكتبة مدرسية تفاعلية لعرض وحفظ وتوثيق إنتاجات وإبداعات التلاميذ في العلوم والفنون والإذاعة والمشاريع التربوية.',
-    hero_cover_url: '/src/assets/images/hero_school_cover_1795563098821.jpg',
-    logo_url: '/assets/aistudio/LOGO_e619da1e.png',
-    academic_year: '2026 / 2027',
-    footer_note: 'جميع الحقوق محفوظة لمدرسة الحسن الداخل — معرض الإبداع الطلابي الرقمي',
-  };
-
   await db.batch(
-    Object.entries(defaults).map(([k, v]) =>
+    Object.entries(DEFAULT_PLATFORM_SETTINGS).map(([k, v]) =>
       db.prepare(`INSERT OR IGNORE INTO platform_settings (key, value) VALUES (?, ?)`).bind(k, v)
     )
   );
@@ -515,7 +518,7 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
         keywords: 'بودكاست, قراءة, كتاب, صوتي',
         status: 'published',
         featured: 0,
-        views: 134,
+        views: 0,
       },
     ];
 
@@ -546,6 +549,18 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
           )
       )
     );
+  }
+
+  const realMigrated = await db
+    .prepare(`SELECT value FROM platform_settings WHERE key = '_internal_real_stats_migrated'`)
+    .first<{ value: string }>();
+  if (realMigrated?.value !== '1') {
+    await db.batch([
+      db.prepare('UPDATE work_items SET views_count = 0 WHERE is_sample = 1'),
+      db.prepare(
+        `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('_internal_real_stats_migrated', '1')`
+      ),
+    ]);
   }
 
   initializedD1 = true;
@@ -599,14 +614,29 @@ async function getSettingsD1(db: D1Database): Promise<PlatformSettings> {
     .all<{ key: string; value: string }>();
   const map: Record<string, string> = {};
   for (const r of results) map[r.key] = r.value;
+  return mergePlatformSettings(map);
+}
+
+async function getPublicSiteStatsD1(db: D1Database): Promise<PublicSiteStats> {
+  const [visitRow, viewsRow] = await Promise.all([
+    db
+      .prepare(`
+        SELECT
+          COUNT(*) AS total_site_visits,
+          SUM(CASE WHEN visit_date = date('now') THEN 1 ELSE 0 END) AS today_site_visits,
+          COUNT(DISTINCT NULLIF(visitor_hash, '')) AS unique_visitors
+        FROM platform_visits
+      `)
+      .first<Record<string, number>>(),
+    db
+      .prepare(`SELECT COALESCE(SUM(views_count), 0) AS total_work_views FROM work_items WHERE status = 'published'`)
+      .first<Record<string, number>>(),
+  ]);
   return {
-    school_name: map.school_name || 'مدرسة الحسن الداخل',
-    platform_title: map.platform_title || 'المنصة التعليمية لمدرسة الحسن الداخل',
-    platform_tagline: map.platform_tagline || '',
-    hero_cover_url: map.hero_cover_url || '/src/assets/images/hero_school_cover_1795563098821.jpg',
-    logo_url: map.logo_url || '/assets/aistudio/LOGO_e619da1e.png',
-    academic_year: map.academic_year || '2026 / 2027',
-    footer_note: map.footer_note || '',
+    total_site_visits: Number(visitRow?.total_site_visits || 0),
+    today_site_visits: Number(visitRow?.today_site_visits || 0),
+    unique_visitors: Number(visitRow?.unique_visitors || 0),
+    total_work_views: Number(viewsRow?.total_work_views || 0),
   };
 }
 
@@ -924,7 +954,7 @@ async function inspectUrlEdge(
       detected_content_type: inferredType,
       original_url: trimmed,
       embed_url: drive.embedUrl,
-      thumbnail_url: '',
+      thumbnail_url: inferredType === 'image' ? normalizeImageUrl(trimmed) : '',
       media_mime: 'text/html',
       embed_status: 'ok',
       message: 'رابط Google Drive متاح للمعاينة العامة وتم تحويله إلى مشغل مدمج.',
@@ -1006,10 +1036,11 @@ export async function onRequest(context: EventContext): Promise<Response> {
 
   // Public bootstrap
   if (method === 'GET' && path === '/api/public/bootstrap') {
-    const [settings, categories, latest, mostViewed, featured, radioCorner, artCorner, videoCorner, projectCorner] =
+    const [settings, categories, siteStats, latest, mostViewed, featured, radioCorner, artCorner, videoCorner, projectCorner] =
       await Promise.all([
         getSettingsD1(db),
         getCategoriesD1(db, true),
+        getPublicSiteStatsD1(db),
         queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked'`, [], 'w.publish_date DESC, w.id DESC', 8),
         queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked'`, [], 'w.views_count DESC, w.id DESC', 6),
         queryWorksD1(db, `WHERE w.status = 'published' AND w.featured = 1 AND w.embed_status != 'blocked'`, [], 'w.publish_date DESC, w.id DESC', 6),
@@ -1027,8 +1058,21 @@ export async function onRequest(context: EventContext): Promise<Response> {
     return jsonResponse({
       settings,
       categories,
+      siteStats,
       sections: { latest, mostViewed, featured, radioCorner, artCorner, videoCorner, projectCorner },
     });
+  }
+
+  // Record real public platform visit
+  if (method === 'POST' && path === '/api/public/visit') {
+    const body = (await request.json().catch(() => ({}))) as { path?: string; visitor_id?: string };
+    const pathVal = typeof body.path === 'string' ? body.path.slice(0, 120) : '/';
+    const visitorHash = typeof body.visitor_id === 'string' ? body.visitor_id.trim().slice(0, 64) : '';
+    await db
+      .prepare(`INSERT INTO platform_visits (visit_date, path, visitor_hash) VALUES (date('now'), ?, ?)`)
+      .bind(pathVal, visitorHash)
+      .run();
+    return jsonResponse({ ok: true, siteStats: await getPublicSiteStatsD1(db) });
   }
 
   // Public works search
@@ -1086,7 +1130,11 @@ export async function onRequest(context: EventContext): Promise<Response> {
       .prepare(`UPDATE work_items SET views_count = views_count + 1 WHERE id = ? AND status = 'published'`)
       .bind(id)
       .run();
-    return jsonResponse({ ok: true });
+    const row = await db
+      .prepare('SELECT views_count FROM work_items WHERE id = ?')
+      .bind(id)
+      .first<{ views_count: number }>();
+    return jsonResponse({ ok: true, views_count: Number(row?.views_count || 0) });
   }
 
   const workSingleMatch = path.match(/^\/api\/public\/works\/(\d+)$/);
@@ -1229,23 +1277,26 @@ export async function onRequest(context: EventContext): Promise<Response> {
     }
 
     if (method === 'GET' && path === '/api/admin/stats') {
-      const counts = await db
-        .prepare(`
-          SELECT
-            COUNT(*) AS total_items,
-            SUM(CASE WHEN content_type = 'video' THEN 1 ELSE 0 END) AS total_videos,
-            SUM(CASE WHEN content_type = 'audio' THEN 1 ELSE 0 END) AS total_audio,
-            SUM(CASE WHEN content_type = 'image' THEN 1 ELSE 0 END) AS total_images,
-            SUM(CASE WHEN content_type = 'project' THEN 1 ELSE 0 END) AS total_projects,
-            SUM(CASE WHEN content_type = 'pdf' THEN 1 ELSE 0 END) AS total_pdfs,
-            SUM(CASE WHEN content_type = 'presentation' THEN 1 ELSE 0 END) AS total_presentations,
-            SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) AS published_count,
-            SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draft_count,
-            COALESCE(SUM(views_count), 0) AS total_views
-          FROM work_items
-        `)
-        .first<Record<string, number>>();
-      const latestItems = await queryWorksD1(db, '', [], 'w.created_at DESC, w.id DESC', 6);
+      const [counts, latestItems, siteStats] = await Promise.all([
+        db
+          .prepare(`
+            SELECT
+              COUNT(*) AS total_items,
+              SUM(CASE WHEN content_type = 'video' THEN 1 ELSE 0 END) AS total_videos,
+              SUM(CASE WHEN content_type = 'audio' THEN 1 ELSE 0 END) AS total_audio,
+              SUM(CASE WHEN content_type = 'image' THEN 1 ELSE 0 END) AS total_images,
+              SUM(CASE WHEN content_type = 'project' THEN 1 ELSE 0 END) AS total_projects,
+              SUM(CASE WHEN content_type = 'pdf' THEN 1 ELSE 0 END) AS total_pdfs,
+              SUM(CASE WHEN content_type = 'presentation' THEN 1 ELSE 0 END) AS total_presentations,
+              SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) AS published_count,
+              SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS draft_count,
+              COALESCE(SUM(views_count), 0) AS total_views
+            FROM work_items
+          `)
+          .first<Record<string, number>>(),
+        queryWorksD1(db, '', [], 'w.created_at DESC, w.id DESC', 6),
+        getPublicSiteStatsD1(db),
+      ]);
       return jsonResponse({
         total_items: Number(counts?.total_items || 0),
         total_videos: Number(counts?.total_videos || 0),
@@ -1257,8 +1308,19 @@ export async function onRequest(context: EventContext): Promise<Response> {
         published_count: Number(counts?.published_count || 0),
         draft_count: Number(counts?.draft_count || 0),
         total_views: Number(counts?.total_views || 0),
+        total_site_visits: siteStats.total_site_visits,
+        today_site_visits: siteStats.today_site_visits,
+        unique_visitors: siteStats.unique_visitors,
         latest_items: latestItems,
       });
+    }
+
+    if (method === 'POST' && path === '/api/admin/stats/reset') {
+      await db.batch([
+        db.prepare('DELETE FROM platform_visits'),
+        db.prepare('UPDATE work_items SET views_count = 0'),
+      ]);
+      return jsonResponse({ ok: true });
     }
 
     if (method === 'POST' && path === '/api/admin/inspect-link') {
@@ -1330,7 +1392,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
       }
 
       const galleryUrls = Array.isArray(body.gallery_urls)
-        ? body.gallery_urls.filter((u): u is string => typeof u === 'string' && isSafeUrl(u))
+        ? body.gallery_urls
+            .filter((u): u is string => typeof u === 'string' && isSafeUrl(u))
+            .map((u) => normalizeImageUrl(u))
         : [];
       const res = await db
         .prepare(`
@@ -1353,7 +1417,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
           originalUrl,
           typeof body.embed_url === 'string' && isSafeUrl(body.embed_url) ? body.embed_url.trim() : parsed.embedUrl,
           typeof body.media_mime === 'string' ? body.media_mime : parsed.mediaMime,
-          typeof body.thumbnail_url === 'string' && isSafeUrl(body.thumbnail_url) ? body.thumbnail_url.trim() : parsed.thumbnailUrl,
+          typeof body.thumbnail_url === 'string' && isSafeUrl(body.thumbnail_url)
+            ? normalizeImageUrl(body.thumbnail_url)
+            : parsed.thumbnailUrl,
           JSON.stringify(galleryUrls),
           categoryId,
           body.subcategory_id ? Number(body.subcategory_id) : null,
@@ -1411,7 +1477,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
           : 'video';
         const parsed = parseMediaUrlClient(originalUrl, preferredMethod, preferredType);
         const galleryUrls = Array.isArray(body.gallery_urls)
-          ? body.gallery_urls.filter((u): u is string => typeof u === 'string' && isSafeUrl(u))
+          ? body.gallery_urls
+              .filter((u): u is string => typeof u === 'string' && isSafeUrl(u))
+              .map((u) => normalizeImageUrl(u))
           : [];
         await db
           .prepare(`
@@ -1435,7 +1503,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
             originalUrl,
             typeof body.embed_url === 'string' && isSafeUrl(body.embed_url) ? body.embed_url.trim() : parsed.embedUrl,
             typeof body.media_mime === 'string' ? body.media_mime : parsed.mediaMime,
-            typeof body.thumbnail_url === 'string' && isSafeUrl(body.thumbnail_url) ? body.thumbnail_url.trim() : parsed.thumbnailUrl,
+            typeof body.thumbnail_url === 'string' && isSafeUrl(body.thumbnail_url)
+              ? normalizeImageUrl(body.thumbnail_url)
+              : parsed.thumbnailUrl,
             JSON.stringify(galleryUrls),
             Number(body.category_id),
             body.subcategory_id ? Number(body.subcategory_id) : null,
@@ -1511,22 +1581,19 @@ export async function onRequest(context: EventContext): Promise<Response> {
       }
       if (method === 'PUT') {
         const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-        const allowed = [
-          'school_name',
-          'platform_title',
-          'platform_tagline',
-          'hero_cover_url',
-          'logo_url',
-          'academic_year',
-          'footer_note',
-        ];
         const stmts: D1PreparedStatement[] = [];
-        for (const k of allowed) {
+        for (const k of SETTING_KEYS) {
           const val = body[k];
           if (typeof val === 'string') {
-            const trimmed = val.trim();
-            if ((k === 'hero_cover_url' || k === 'logo_url') && trimmed && !isSafeUrl(trimmed)) {
-              return jsonResponse({ error: `الرابط المدخل للحقل ${k} غير صالح.` }, 400);
+            let trimmed = val.trim();
+            if ((k === 'hero_cover_url' || k === 'logo_url') && trimmed) {
+              if (!isSafeUrl(trimmed)) {
+                return jsonResponse({ error: `الرابط المدخل للحقل ${k} غير صالح.` }, 400);
+              }
+              trimmed = normalizeImageUrl(trimmed);
+            }
+            if (k === 'primary_color' && trimmed && !/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
+              return jsonResponse({ error: 'صيغة اللون الأساسي غير صالحة.' }, 400);
             }
             stmts.push(
               db

@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
-import { isSafeUrl } from '../../lib/mediaUtils.ts';
+import { isSafeUrl, normalizeImageUrl } from '../../lib/mediaUtils.ts';
 
 interface AdminLayoutProps {
   title: string;
@@ -45,9 +45,9 @@ export function AdminLayout({ title, children }: AdminLayoutProps) {
       {/* Desktop Sidebar (256px) */}
       <aside className="hidden lg:flex lg:w-64 lg:flex-col bg-white border-l border-slate-200 shrink-0">
         <div className="h-16 px-5 border-b border-slate-200 flex items-center gap-3">
-          {isSafeUrl(settings.logo_url) && (
+          {isSafeUrl(normalizeImageUrl(settings.logo_url)) && (
             <img
-              src={settings.logo_url}
+              src={normalizeImageUrl(settings.logo_url)}
               alt={settings.school_name}
               referrerPolicy="no-referrer"
               className="h-9 w-auto object-contain mix-blend-multiply shrink-0"

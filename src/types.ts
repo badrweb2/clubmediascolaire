@@ -12,6 +12,11 @@ export type PublishStatus = 'published' | 'draft';
 
 export type EmbedHealth = 'ok' | 'warning' | 'blocked';
 
+export interface FaqItem {
+  question: string;
+  answer: string;
+}
+
 export interface Category {
   id: number;
   name: string;
@@ -61,6 +66,58 @@ export interface PlatformSettings {
   logo_url: string;
   academic_year: string;
   footer_note: string;
+  // Extended hero & footer
+  hero_badge_text: string;
+  hero_primary_btn_text: string;
+  hero_secondary_btn_text: string;
+  footer_publish_note: string;
+  primary_color: string;
+  // Main navigation labels
+  nav_home_label: string;
+  nav_videos_label: string;
+  nav_audio_label: string;
+  nav_innovations_label: string;
+  nav_projects_label: string;
+  nav_activities_label: string;
+  nav_works_label: string;
+  // Homepage section titles & visibility toggles ('1' or '0')
+  show_stats_bar: string;
+  show_categories_section: string;
+  categories_section_title: string;
+  show_latest_section: string;
+  latest_section_title: string;
+  show_featured_section: string;
+  featured_section_title: string;
+  show_most_viewed_section: string;
+  most_viewed_section_title: string;
+  show_radio_corner: string;
+  radio_corner_title: string;
+  show_art_corner: string;
+  art_corner_title: string;
+  show_video_corner: string;
+  video_corner_title: string;
+  show_project_corner: string;
+  project_corner_title: string;
+  // Display preferences
+  show_view_counts: string;
+  show_share_button: string;
+  // About page & supervisor
+  about_button_label: string;
+  about_title: string;
+  about_definition: string;
+  about_contents: string;
+  about_objectives: string;
+  supervisor_name: string;
+  supervisor_title: string;
+  supervisor_bio: string;
+  about_faq_json: string;
+}
+
+export interface PublicSiteStats {
+  total_site_visits: number;
+  today_site_visits: number;
+  unique_visitors: number;
+  total_work_views: number;
 }
 
 export interface AdminStats {
@@ -74,6 +131,9 @@ export interface AdminStats {
   published_count: number;
   draft_count: number;
   total_views: number;
+  total_site_visits: number;
+  today_site_visits: number;
+  unique_visitors: number;
   latest_items: WorkItem[];
 }
 

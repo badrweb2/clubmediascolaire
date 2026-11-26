@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Activity,
   CheckCircle2,
   Edit3,
   Eye,
@@ -10,6 +11,8 @@ import {
   Layers,
   Play,
   PlusCircle,
+  RotateCcw,
+  Users,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { AdminLayout } from './AdminLayout.tsx';
@@ -21,30 +24,50 @@ export function AdminDashboardPage() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const loadStats = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiFetch<AdminStats>('/api/admin/stats');
+      setStats(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تحميل الإحصائيات.');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiFetch]);
 
   useEffect(() => {
-    let active = true;
-    setLoading(true);
-    apiFetch<AdminStats>('/api/admin/stats')
-      .then((data) => {
-        if (active) setStats(data);
-      })
-      .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : 'تعذر تحميل الإحصائيات.');
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [apiFetch]);
+    loadStats();
+  }, [loadStats]);
+
+  const handleResetStats = async () => {
+    setResetting(true);
+    try {
+      await apiFetch('/api/admin/stats/reset', { method: 'POST' });
+      setConfirmReset(false);
+      await loadStats();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تصفير العدادات.');
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const statCards = stats
     ? [
+        { label: 'إجمالي زيارات المنصة (حقيقي)', value: stats.total_site_visits, icon: Activity },
+        { label: 'زيارات اليوم', value: stats.today_site_visits, icon: Activity },
+        { label: 'الزوار الفريدون', value: stats.unique_visitors, icon: Users },
+        { label: 'مشاهدات الإنتاجات الفعلية', value: stats.total_views, icon: Eye },
         { label: 'إجمالي الإنتاجات', value: stats.total_items, icon: Layers },
+        { label: 'المحتويات المنشورة', value: stats.published_count, icon: CheckCircle2 },
+        { label: 'المسودات', value: stats.draft_count, icon: Edit3 },
         { label: 'الفيديوهات', value: stats.total_videos, icon: Play },
-        { label: 'التسجيلات الصوتية', value: stats.total_audio, icon: Headphones },
+        { label: 'التسجيلات الصوتية والإذاعة', value: stats.total_audio, icon: Headphones },
         { label: 'الصور والفنون', value: stats.total_images, icon: ImageIcon },
         { label: 'المشاريع المدرسية', value: stats.total_projects, icon: FolderKanban },
         {
@@ -52,9 +75,6 @@ export function AdminDashboardPage() {
           value: stats.total_pdfs + stats.total_presentations,
           icon: FileText,
         },
-        { label: 'المحتويات المنشورة', value: stats.published_count, icon: CheckCircle2 },
-        { label: 'المسودات', value: stats.draft_count, icon: Edit3 },
-        { label: 'إجمالي المشاهدات', value: stats.total_views, icon: Eye },
       ]
     : [];
 
@@ -64,21 +84,56 @@ export function AdminDashboardPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="font-display text-2xl font-bold text-slate-900">
-              ملخص المنصة وإحصائيات المحتوى
+              ملخص المنصة والإحصائيات الحقيقية
             </h1>
             <p className="text-sm text-slate-600 mt-1">
-              متابعة فورية لعدد الإنتاجات المنشورة، المسودات، وإجمالي المشاهدات داخل المنصة.
+              متابعة فورية ودقيقة لعدد الزيارات الفعلية للمنصة، مشاهدات الإنتاجات، وحالة النشر.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate('/admin/add')}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#1E40AF] text-white text-sm font-medium hover:bg-[#1E3A8A] cursor-pointer whitespace-nowrap shrink-0"
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>إضافة محتوى جديد</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setConfirmReset(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium hover:bg-slate-50 cursor-pointer whitespace-nowrap"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>تصفير عدادات الزيارات</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/admin/add')}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#1E40AF] text-white text-sm font-medium hover:bg-[#1E3A8A] cursor-pointer whitespace-nowrap"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>إضافة محتوى جديد</span>
+            </button>
+          </div>
         </div>
+
+        {confirmReset && (
+          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <p className="text-xs sm:text-sm text-amber-900">
+              هل تريد تصفير جميع عدادات الزيارات والمشاهدات والبدء من الصفر؟
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setConfirmReset(false)}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 bg-white text-xs text-slate-700 cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={resetting}
+                onClick={handleResetStats}
+                className="px-3 py-1.5 rounded-lg bg-amber-700 text-white text-xs font-medium hover:bg-amber-800 disabled:opacity-60 cursor-pointer"
+              >
+                {resetting ? 'جاري التصفير...' : 'تأكيد التصفير'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-sm text-rose-800">
@@ -93,7 +148,7 @@ export function AdminDashboardPage() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {statCards.map((card) => {
               const Icon = card.icon;
               return (

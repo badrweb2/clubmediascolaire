@@ -1,7 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BookOpen, Eye, FileText, FolderKanban, Headphones, Image as ImageIcon, Play } from 'lucide-react';
 import type { ContentType, WorkItem } from '../types.ts';
-import { CONTENT_TYPE_LABELS, formatArabicDate, isSafeUrl } from '../lib/mediaUtils.ts';
+import {
+  CONTENT_TYPE_LABELS,
+  formatArabicDate,
+  isSafeUrl,
+  normalizeImageUrl,
+} from '../lib/mediaUtils.ts';
+import { isSettingEnabled } from '../lib/settingsDefaults.ts';
 import { useApp } from '../context/AppContext.tsx';
 
 function getTypeIcon(type: ContentType) {
@@ -22,10 +28,17 @@ function getTypeIcon(type: ContentType) {
 }
 
 export function WorkCard({ item }: { item: WorkItem }) {
-  const { navigate } = useApp();
+  const { navigate, settings } = useApp();
   const [imgFailed, setImgFailed] = useState(false);
 
-  const hasThumb = item.thumbnail_url && isSafeUrl(item.thumbnail_url) && !imgFailed;
+  const resolvedThumb = normalizeImageUrl(item.thumbnail_url);
+
+  useEffect(() => {
+    setImgFailed(false);
+  }, [resolvedThumb]);
+
+  const hasThumb = Boolean(resolvedThumb && isSafeUrl(resolvedThumb) && !imgFailed);
+  const showViews = isSettingEnabled(settings.show_view_counts);
 
   return (
     <article
@@ -43,7 +56,8 @@ export function WorkCard({ item }: { item: WorkItem }) {
       <div className="relative aspect-[16/10] bg-slate-100 overflow-hidden">
         {hasThumb ? (
           <img
-            src={item.thumbnail_url}
+            key={resolvedThumb}
+            src={resolvedThumb}
             alt={item.title}
             referrerPolicy="no-referrer"
             onError={() => setImgFailed(true)}
@@ -103,10 +117,12 @@ export function WorkCard({ item }: { item: WorkItem }) {
             {item.student_name ? item.student_name : 'إنتاج مدرسي'}
           </span>
           <div className="flex items-center gap-3 shrink-0 tabular-nums">
-            <span className="inline-flex items-center gap-1">
-              <Eye className="w-3.5 h-3.5" />
-              {item.views_count}
-            </span>
+            {showViews && (
+              <span className="inline-flex items-center gap-1">
+                <Eye className="w-3.5 h-3.5" />
+                {item.views_count}
+              </span>
+            )}
             <span>{formatArabicDate(item.publish_date)}</span>
           </div>
         </div>
