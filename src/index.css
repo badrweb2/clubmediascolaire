@@ -63,6 +63,49 @@
   animation: subtlePulseGlow 3.2s ease-in-out infinite;
 }
 
+@keyframes tickerLtr {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100cqw);
+  }
+}
+
+@keyframes tickerRtl {
+  0% {
+    transform: translateX(100cqw);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.ticker-viewport {
+  container-type: inline-size;
+  direction: ltr;
+  overflow: hidden;
+  position: relative;
+}
+
+.ticker-track {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.animate-ticker-ltr {
+  animation: tickerLtr var(--ticker-duration, 18s) linear infinite;
+}
+
+.animate-ticker-rtl {
+  animation: tickerRtl var(--ticker-duration, 18s) linear infinite;
+}
+
+.ticker-viewport:hover .ticker-track {
+  animation-play-state: paused;
+}
+
 .reduce-motion-platform *,
 .reduce-motion-platform *::before,
 .reduce-motion-platform *::after {
@@ -72,11 +115,29 @@
   scroll-behavior: auto !important;
 }
 
+.reduce-motion-platform .ticker-track {
+  animation: none !important;
+  transform: none !important;
+  white-space: normal;
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  .ticker-track {
+    animation: none !important;
+    transform: none !important;
+    white-space: normal;
+    display: block;
+    width: 100%;
+    text-align: center;
   }
 }

@@ -10,9 +10,11 @@ import {
   Info,
   KeyRound,
   LayoutTemplate,
+  Link2,
   Megaphone,
   Palette,
   Plus,
+  RotateCcw,
   Save,
   Shield,
   Sliders,
@@ -27,16 +29,23 @@ import { useApp } from '../../context/AppContext.tsx';
 import { AdminLayout } from './AdminLayout.tsx';
 import { ConfirmDeleteDropdown } from '../../components/ConfirmDeleteDropdown.tsx';
 import { ConfirmActionDropdown } from '../../components/ConfirmActionDropdown.tsx';
+import { SocialBrandIcon, getSocialBrandColor } from '../../components/SocialBrandIcon.tsx';
 import { isSafeUrl, normalizeImageUrl } from '../../lib/mediaUtils.ts';
 import {
   ADMIN_PERMISSION_LABELS,
   ALL_ADMIN_PERMISSIONS,
   BUILTIN_NAV_ITEMS,
   DEFAULT_PLATFORM_SETTINGS,
+  DEFAULT_SOCIAL_LINKS,
+  SOCIAL_ICON_OPTIONS,
+  UI_SOUND_PRESET_OPTIONS,
+  isSafeSocialUrl,
   isSettingEnabled,
   parseCustomNavItems,
   parseFaqJson,
+  parseHeroExtraCoversJson,
   parseHiddenNavKeys,
+  parseSocialLinksJson,
 } from '../../lib/settingsDefaults.ts';
 import {
   BACKGROUND_BANK,
@@ -46,13 +55,20 @@ import {
   THEME_BANK,
   type SiteThemePreset,
 } from '../../lib/themePresets.ts';
-import { playClickSound, playNavSound, setUiSoundsEnabled } from '../../lib/uiSounds.ts';
+import {
+  playSoundPreview,
+  setUiSoundPreset,
+  setUiSoundsEnabled,
+} from '../../lib/uiSounds.ts';
 import type {
   AdminPermission,
   AdminUserSummary,
   CustomNavItem,
   FaqItem,
   PlatformSettings,
+  SocialIconKey,
+  SocialLinkItem,
+  UiSoundPreset,
 } from '../../types.ts';
 
 const HERO_PRESETS = [
@@ -157,6 +173,12 @@ export function AdminSettingsPage() {
   );
   const [customNavItems, setCustomNavItems] = useState<CustomNavItem[]>([]);
   const [hiddenNavKeys, setHiddenNavKeys] = useState<string[]>([]);
+  const [heroExtraCovers, setHeroExtraCovers] = useState<string[]>([]);
+  const [newHeroExtraUrl, setNewHeroExtraUrl] = useState('');
+  const [socialLinks, setSocialLinks] = useState<SocialLinkItem[]>(DEFAULT_SOCIAL_LINKS);
+  const [newSocialLabel, setNewSocialLabel] = useState('');
+  const [newSocialUrl, setNewSocialUrl] = useState('');
+  const [newSocialIcon, setNewSocialIcon] = useState<SocialIconKey>('website');
   const [loading, setLoading] = useState(canManageSettings);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(
@@ -215,6 +237,8 @@ export function AdminSettingsPage() {
         setFaqItems(parseFaqJson(res.settings.about_faq_json));
         setCustomNavItems(parseCustomNavItems(res.settings.custom_nav_items_json));
         setHiddenNavKeys(parseHiddenNavKeys(res.settings.hidden_nav_keys_json));
+        setHeroExtraCovers(parseHeroExtraCoversJson(res.settings.hero_extra_covers_json));
+        setSocialLinks(parseSocialLinksJson(res.settings.social_links_json));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -257,6 +281,29 @@ export function AdminSettingsPage() {
         }))
         .filter((item) => item.question || item.answer);
 
+      const cleanedHeroExtras = heroExtraCovers
+        .map((u) => normalizeImageUrl(u))
+        .filter((u, idx, arr) => Boolean(u) && isSafeUrl(u) && arr.indexOf(u) === idx);
+
+      const cleanedSocialLinks = socialLinks
+        .map((item, idx) => ({
+          id: item.id || `social-${idx + 1}`,
+          label: item.label.trim() || 'رابط خارجي',
+          url: item.url.trim(),
+          icon: item.icon || 'website',
+          enabled: item.enabled !== false,
+        }))
+        .filter((item) => isSafeSocialUrl(item.url));
+
+      if (cleanedSocialLinks.length !== socialLinks.length) {
+        setFeedback({
+          type: 'error',
+          text: 'أحد روابط التواصل الاجتماعي غير صالح. يرجى التأكد من أن جميع الروابط تبدأ بـ https:// أو http://.',
+        });
+        setSaving(false);
+        return;
+      }
+
       const normalizedForm: PlatformSettings = {
         ...merged,
         hero_cover_url: normalizeImageUrl(merged.hero_cover_url),
@@ -269,6 +316,9 @@ export function AdminSettingsPage() {
         about_faq_json: JSON.stringify(cleanedFaq),
         hidden_nav_keys_json: JSON.stringify(hiddenNavKeys),
         custom_nav_items_json: JSON.stringify(customNavItems),
+        hero_extra_covers_json: JSON.stringify(cleanedHeroExtras),
+        ui_sound_preset: merged.ui_sound_preset || 'classic',
+        social_links_json: JSON.stringify(cleanedSocialLinks),
       };
 
       const res = await apiFetch<{ settings: PlatformSettings }>('/api/admin/settings', {
@@ -279,6 +329,9 @@ export function AdminSettingsPage() {
       setFaqItems(parseFaqJson(res.settings.about_faq_json));
       setCustomNavItems(parseCustomNavItems(res.settings.custom_nav_items_json));
       setHiddenNavKeys(parseHiddenNavKeys(res.settings.hidden_nav_keys_json));
+      setHeroExtraCovers(parseHeroExtraCoversJson(res.settings.hero_extra_covers_json));
+      setSocialLinks(parseSocialLinksJson(res.settings.social_links_json));
+      setUiSoundPreset(res.settings.ui_sound_preset);
       await refreshPublicBootstrap();
       setFeedback({
         type: 'success',
@@ -362,6 +415,77 @@ export function AdminSettingsPage() {
     const target = idx + delta;
     if (target < 0 || target >= customNavItems.length) return;
     setCustomNavItems((prev) => {
+      const next = [...prev];
+      const temp = next[idx];
+      next[idx] = next[target];
+      next[target] = temp;
+      return next;
+    });
+  };
+
+  const handleAddHeroExtraCover = (rawUrl?: string) => {
+    const candidate = normalizeImageUrl((rawUrl ?? newHeroExtraUrl).trim());
+    if (!candidate || !isSafeUrl(candidate)) {
+      setFeedback({ type: 'error', text: 'يرجى إدخال رابط صورة صالح يبدأ بـ https:// أو http://.' });
+      return;
+    }
+    if (candidate === normalizeImageUrl(form.hero_cover_url) || heroExtraCovers.includes(candidate)) {
+      setFeedback({ type: 'error', text: 'هذه الصورة مضافة مسبقاً ضمن صور الواجهة الرئيسية.' });
+      return;
+    }
+    setHeroExtraCovers((prev) => [...prev, candidate]);
+    if (!rawUrl) setNewHeroExtraUrl('');
+    setFeedback({
+      type: 'success',
+      text: 'تمت إضافة الصورة للعرض المتحرك في الرئيسية. اضغط «حفظ جميع الإعدادات» لتطبيق التغيير.',
+    });
+  };
+
+  const moveHeroExtraCover = (idx: number, delta: -1 | 1) => {
+    const target = idx + delta;
+    if (target < 0 || target >= heroExtraCovers.length) return;
+    setHeroExtraCovers((prev) => {
+      const next = [...prev];
+      const temp = next[idx];
+      next[idx] = next[target];
+      next[target] = temp;
+      return next;
+    });
+  };
+
+  const handleAddSocialLink = () => {
+    const label = newSocialLabel.trim();
+    const url = newSocialUrl.trim();
+    if (!label) {
+      setFeedback({ type: 'error', text: 'يرجى كتابة اسم القناة أو الموقع قبل الإضافة.' });
+      return;
+    }
+    if (!isSafeSocialUrl(url)) {
+      setFeedback({ type: 'error', text: 'يرجى إدخال رابط صالح يبدأ بـ https:// أو http://.' });
+      return;
+    }
+    setSocialLinks((prev) => [
+      ...prev,
+      {
+        id: `social-${Date.now()}`,
+        label,
+        url,
+        icon: newSocialIcon,
+        enabled: true,
+      },
+    ]);
+    setNewSocialLabel('');
+    setNewSocialUrl('');
+    setFeedback({
+      type: 'success',
+      text: `تمت إضافة رابط «${label}» لأزرار التواصل الاجتماعي. اضغط «حفظ جميع الإعدادات» لتثبيته في التذييل.`,
+    });
+  };
+
+  const moveSocialLink = (idx: number, delta: -1 | 1) => {
+    const target = idx + delta;
+    if (target < 0 || target >= socialLinks.length) return;
+    setSocialLinks((prev) => {
       const next = [...prev];
       const temp = next[idx];
       next[idx] = next[target];
@@ -1043,6 +1167,119 @@ export function AdminSettingsPage() {
                         />
                       </div>
                     )}
+
+                    {/* Multi-Image Hero Slideshow Manager */}
+                    <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                          <div className="text-xs sm:text-sm font-bold text-slate-900">
+                            صور إضافية لواجهة العرض المتحرك في الصفحة الرئيسية ({heroExtraCovers.length})
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            أضف أكثر من صورة لتشتغل تلقائياً كعرض شرائح أنيق في الصورة الرئيسية للمنصة (مع أزرار تنقل ونقاط عرض).
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          dir="ltr"
+                          value={newHeroExtraUrl}
+                          onChange={(e) => setNewHeroExtraUrl(e.target.value)}
+                          placeholder="https://... أو رابط صورة Google Drive"
+                          className="flex-1 px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs sm:text-sm text-left"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAddHeroExtraCover()}
+                          className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-[#1E40AF] text-white text-xs font-medium hover:bg-[#1E3A8A] cursor-pointer shrink-0"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>إضافة صورة للعرض</span>
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] text-slate-500 ml-1">إضافة سريعة من الجاهزة:</span>
+                        {HERO_PRESETS.map((preset) => (
+                          <button
+                            key={`extra-${preset.url}`}
+                            type="button"
+                            onClick={() => handleAddHeroExtraCover(preset.url)}
+                            className="px-2.5 py-1 rounded-md border border-slate-200 bg-white text-[11px] text-slate-700 hover:bg-slate-100 cursor-pointer"
+                          >
+                            + {preset.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {heroExtraCovers.length > 0 && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                          {heroExtraCovers.map((imgUrl, idx) => (
+                            <div
+                              key={`${imgUrl}-${idx}`}
+                              className="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center gap-3"
+                            >
+                              <img
+                                src={imgUrl}
+                                alt={`صورة رئيسية ${idx + 2}`}
+                                referrerPolicy="no-referrer"
+                                className="w-20 h-14 rounded-lg object-cover border border-slate-200 shrink-0 bg-slate-100"
+                              />
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <div className="text-[11px] font-semibold text-slate-800">
+                                  الصورة الإضافية #{idx + 1}
+                                </div>
+                                <div
+                                  dir="ltr"
+                                  className="text-[10px] text-slate-500 truncate text-left"
+                                  title={imgUrl}
+                                >
+                                  {imgUrl}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={idx === 0}
+                                  onClick={() => moveHeroExtraCover(idx, -1)}
+                                  className="p-1.5 rounded border border-slate-200 text-slate-600 disabled:opacity-30 cursor-pointer"
+                                  title="تقديم"
+                                >
+                                  <ArrowUp className="w-3 h-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={idx === heroExtraCovers.length - 1}
+                                  onClick={() => moveHeroExtraCover(idx, 1)}
+                                  className="p-1.5 rounded border border-slate-200 text-slate-600 disabled:opacity-30 cursor-pointer"
+                                  title="تأخير"
+                                >
+                                  <ArrowDown className="w-3 h-3" />
+                                </button>
+                                <ConfirmDeleteDropdown
+                                  message="هل تريد إزالة هذه الصورة من العرض المتحرك بالرئيسية؟"
+                                  onConfirm={() =>
+                                    setHeroExtraCovers((prev) => prev.filter((_, i) => i !== idx))
+                                  }
+                                  renderTrigger={({ onClick }) => (
+                                    <button
+                                      type="button"
+                                      onClick={onClick}
+                                      className="p-1.5 rounded border border-rose-200 text-rose-700 hover:bg-rose-50 cursor-pointer"
+                                      title="حذف الصورة"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Logo & Footer Texts */}
@@ -1088,6 +1325,223 @@ export function AdminSettingsPage() {
                     />
                   </div>
                 </div>
+
+                {/* Footer Social Media Links Manager */}
+                <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h2 className="font-display text-lg font-bold text-slate-900 flex items-center gap-2">
+                        <Link2 className="w-5 h-5 text-[#1E40AF]" />
+                        <span>أزرار التواصل الاجتماعي والروابط في أسفل المنصة</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-1">
+                        تحكم كامل في الأيقونات، الأسماء، الروابط، الترتيب، أو إضافة وإلغاء أي زر في تذييل المنصة.
+                      </p>
+                    </div>
+
+                    <ConfirmActionDropdown
+                      variant="primary"
+                      title="استعادة الروابط الافتراضية"
+                      message="هل تريد استعادة قائمة روابط المدرسة والقنوات الافتراضية الأربع؟"
+                      confirmLabel="نعم، استعادة الروابط"
+                      onConfirm={() => {
+                        setSocialLinks(DEFAULT_SOCIAL_LINKS);
+                        setFeedback({
+                          type: 'success',
+                          text: 'تمت استعادة روابط التواصل الافتراضية. اضغط «حفظ جميع الإعدادات» للاعتماد.',
+                        });
+                      }}
+                      renderTrigger={({ onClick }) => (
+                        <button
+                          type="button"
+                          onClick={onClick}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-50 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>استعادة الروابط الافتراضية</span>
+                        </button>
+                      )}
+                    />
+                  </div>
+
+                  {/* Existing Social Links */}
+                  <div className="space-y-3">
+                    {socialLinks.map((item, idx) => {
+                      const brandColor = getSocialBrandColor(item.icon);
+                      return (
+                        <div
+                          key={item.id}
+                          className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 grid grid-cols-1 lg:grid-cols-12 gap-3 items-center"
+                        >
+                          <div className="lg:col-span-3 flex items-center gap-2.5">
+                            <input
+                              type="checkbox"
+                              checked={item.enabled}
+                              onChange={() =>
+                                setSocialLinks((prev) =>
+                                  prev.map((s, i) =>
+                                    i === idx ? { ...s, enabled: !s.enabled } : s
+                                  )
+                                )
+                              }
+                              title="إظهار أو إخفاء الزر"
+                              className="w-4 h-4 accent-[#1E40AF] shrink-0"
+                            />
+                            <span
+                              style={{ backgroundColor: `${brandColor}16`, color: brandColor }}
+                              className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border border-slate-200/70"
+                            >
+                              <SocialBrandIcon icon={item.icon} className="w-4 h-4" />
+                            </span>
+                            <input
+                              type="text"
+                              value={item.label}
+                              onChange={(e) =>
+                                setSocialLinks((prev) =>
+                                  prev.map((s, i) =>
+                                    i === idx ? { ...s, label: e.target.value } : s
+                                  )
+                                )
+                              }
+                              placeholder="تسمية الزر"
+                              className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs sm:text-sm"
+                            />
+                          </div>
+
+                          <div className="lg:col-span-3">
+                            <select
+                              value={item.icon}
+                              onChange={(e) =>
+                                setSocialLinks((prev) =>
+                                  prev.map((s, i) =>
+                                    i === idx
+                                      ? { ...s, icon: e.target.value as SocialIconKey }
+                                      : s
+                                  )
+                                )
+                              }
+                              className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs sm:text-sm"
+                            >
+                              {SOCIAL_ICON_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="lg:col-span-4">
+                            <input
+                              type="text"
+                              dir="ltr"
+                              value={item.url}
+                              onChange={(e) =>
+                                setSocialLinks((prev) =>
+                                  prev.map((s, i) =>
+                                    i === idx ? { ...s, url: e.target.value } : s
+                                  )
+                                )
+                              }
+                              placeholder="https://..."
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs text-left"
+                            />
+                          </div>
+
+                          <div className="lg:col-span-2 flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => moveSocialLink(idx, -1)}
+                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-30 cursor-pointer"
+                              title="تحريك للأعلى"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === socialLinks.length - 1}
+                              onClick={() => moveSocialLink(idx, 1)}
+                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-30 cursor-pointer"
+                              title="تحريك للأسفل"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                            <ConfirmDeleteDropdown
+                              message={`هل تريد حذف رابط «${item.label}» من التذييل؟`}
+                              onConfirm={() =>
+                                setSocialLinks((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              renderTrigger={({ onClick }) => (
+                                <button
+                                  type="button"
+                                  onClick={onClick}
+                                  className="p-1.5 rounded-lg border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 cursor-pointer"
+                                  title="حذف الرابط"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Add New Social Link */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
+                    <div className="text-xs font-bold text-slate-800">إضافة رابط وأيقونة جديدة:</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <input
+                        type="text"
+                        value={newSocialLabel}
+                        onChange={(e) => setNewSocialLabel(e.target.value)}
+                        placeholder="الاسم (مثال: قناة المؤسسة)"
+                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                      />
+                      <select
+                        value={newSocialIcon}
+                        onChange={(e) => setNewSocialIcon(e.target.value as SocialIconKey)}
+                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                      >
+                        {SOCIAL_ICON_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        dir="ltr"
+                        value={newSocialUrl}
+                        onChange={(e) => setNewSocialUrl(e.target.value)}
+                        placeholder="https://..."
+                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm text-left"
+                      />
+                    </div>
+                    <ConfirmActionDropdown
+                      variant="primary"
+                      title="تأكيد إضافة رابط تواصل"
+                      message={
+                        newSocialLabel.trim()
+                          ? `هل تريد إضافة «${newSocialLabel.trim()}» إلى أزرار التواصل الاجتماعي؟`
+                          : 'سيتم التحقق من الرابط وإضافته.'
+                      }
+                      confirmLabel="إضافة الرابط"
+                      onConfirm={handleAddSocialLink}
+                      renderTrigger={({ onClick }) => (
+                        <button
+                          type="button"
+                          onClick={onClick}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#1E40AF] text-white text-xs font-medium hover:bg-[#1E3A8A] cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>إضافة زر تواصل اجتماعي</span>
+                        </button>
+                      )}
+                    />
+                  </div>
+                </section>
               </div>
             )}
 
@@ -1428,37 +1882,63 @@ export function AdminSettingsPage() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Interactive Click & Navigation Sounds */}
-                    <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-center justify-between gap-3">
-                      <label className="flex items-center gap-2.5 cursor-pointer text-sm font-medium text-slate-800">
-                        <input
-                          type="checkbox"
-                          checked={isSettingEnabled(form.enable_ui_sounds)}
-                          onChange={() => {
-                            const nextEnabled = !isSettingEnabled(form.enable_ui_sounds);
-                            setUiSoundsEnabled(nextEnabled);
-                            setForm((f) => ({ ...f, enable_ui_sounds: nextEnabled ? '1' : '0' }));
-                            if (nextEnabled) playClickSound();
-                          }}
-                          className="w-4 h-4 accent-[#1E40AF] rounded"
-                        />
-                        <span>أصوات التفاعل عند النقر والتصفح</span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setUiSoundsEnabled(true);
-                          playClickSound();
-                          setTimeout(() => playNavSound(), 140);
-                          if (!isSettingEnabled(form.enable_ui_sounds)) {
-                            setUiSoundsEnabled(false);
+                    {/* Interactive Click & Navigation Sounds + Presets */}
+                    <div className="md:col-span-2 p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <label className="flex items-center gap-2.5 cursor-pointer text-sm font-medium text-slate-800">
+                          <input
+                            type="checkbox"
+                            checked={isSettingEnabled(form.enable_ui_sounds)}
+                            onChange={() => {
+                              const nextEnabled = !isSettingEnabled(form.enable_ui_sounds);
+                              setUiSoundsEnabled(nextEnabled);
+                              setForm((f) => ({ ...f, enable_ui_sounds: nextEnabled ? '1' : '0' }));
+                              if (nextEnabled) {
+                                playSoundPreview((form.ui_sound_preset || 'classic') as UiSoundPreset);
+                              }
+                            }}
+                            className="w-4 h-4 accent-[#1E40AF] rounded"
+                          />
+                          <span>أصوات التفاعل عند النقر على الأزرار والتصفح</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            playSoundPreview((form.ui_sound_preset || 'classic') as UiSoundPreset)
                           }
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
-                      >
-                        <Volume2 className="w-3.5 h-3.5 text-[#1E40AF]" />
-                        <span>تجربة الصوت</span>
-                      </button>
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
+                        >
+                          <Volume2 className="w-3.5 h-3.5 text-[#1E40AF]" />
+                          <span>تجربة النغمة المختارة</span>
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+                        {UI_SOUND_PRESET_OPTIONS.map((preset) => {
+                          const selected = (form.ui_sound_preset || 'classic') === preset.id;
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => {
+                                setForm((f) => ({ ...f, ui_sound_preset: preset.id }));
+                                setUiSoundPreset(preset.id);
+                                playSoundPreview(preset.id);
+                              }}
+                              className={`text-right p-2.5 rounded-lg border transition-colors cursor-pointer ${
+                                selected
+                                  ? 'border-[#1E40AF] bg-blue-50/70 text-[#1E40AF]'
+                                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                              }`}
+                            >
+                              <div className="text-xs font-bold">{preset.label}</div>
+                              <div className="text-[10px] text-slate-500 mt-0.5 leading-snug">
+                                {preset.description}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
 
                     {/* Hero Auto Zoom Toggle */}
@@ -1609,7 +2089,9 @@ export function AdminSettingsPage() {
                           onChange={() => toggleFlag('announcement_enabled')}
                           className="w-4 h-4 accent-[#1E40AF] rounded"
                         />
-                        <span>إظهار شريط إعلان وتنبيه أعلى المنصة للزوار</span>
+                        <span>
+                          إظهار الشريط الإخباري المتحرك (فقط بالصفحة الرئيسية أسفل الصورة الرئيسية)
+                        </span>
                       </label>
 
                       <div className="flex items-center gap-2">
@@ -1642,6 +2124,10 @@ export function AdminSettingsPage() {
                       </div>
                     </div>
 
+                    <p className="text-[11px] text-slate-500">
+                      يتحرك الشريط تلقائياً من اليسار إلى اليمين عند الكتابة بالعربية، ومن اليمين إلى اليسار عند الكتابة بالفرنسية، ويظهر فقط في الصفحة الرئيسية أسفل الصورة الرئيسية.
+                    </p>
+
                     <input
                       type="text"
                       value={form.announcement_text}
@@ -1663,17 +2149,35 @@ export function AdminSettingsPage() {
                     {form.announcement_text.trim() && (
                       <div className="space-y-1">
                         <div className="text-[11px] text-slate-500">
-                          معاينة الشريط الإعلاني ({isSettingEnabled(form.announcement_enabled) ? 'مفعّل للظهور' : 'مخفي حالياً — فعّل الخيار أعلاه لإظهاره'}):
+                          معاينة حية للشريط الإخباري ({isSettingEnabled(form.announcement_enabled) ? 'مفعّل للظهور أسفل الصورة الرئيسية' : 'مخفي حالياً — فعّل الخيار أعلاه لإظهاره'}):
                         </div>
                         <div
                           style={{
                             backgroundColor:
                               form.announcement_bg_color || form.primary_color || '#1E40AF',
                           }}
-                          className="rounded-lg text-white text-xs sm:text-sm font-medium px-4 py-2 flex items-center justify-center gap-2 text-center"
+                          className="rounded-xl text-white text-xs sm:text-sm font-medium overflow-hidden flex items-stretch"
                         >
-                          <Megaphone className="w-4 h-4 shrink-0" />
-                          <span>{form.announcement_text}</span>
+                          <div className="bg-black/20 px-3 py-2 flex items-center gap-1.5 shrink-0 border-l border-white/15">
+                            <Megaphone className="w-4 h-4 shrink-0" />
+                            <span className="text-xs font-bold whitespace-nowrap">
+                              {/[\u0600-\u06FF]/.test(form.announcement_text)
+                                ? 'إعلان هام'
+                                : 'Annonce'}
+                            </span>
+                          </div>
+                          <div className="ticker-viewport flex-1 py-2 flex items-center min-w-0">
+                            <div
+                              dir={/[\u0600-\u06FF]/.test(form.announcement_text) ? 'rtl' : 'ltr'}
+                              className={`ticker-track px-3 ${
+                                /[\u0600-\u06FF]/.test(form.announcement_text)
+                                  ? 'animate-ticker-ltr'
+                                  : 'animate-ticker-rtl'
+                              }`}
+                            >
+                              {form.announcement_text}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     )}

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowUp, Megaphone, ShieldAlert } from 'lucide-react';
+import { ArrowUp, ShieldAlert } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { VisitorHeader } from './components/VisitorHeader.tsx';
 import { VisitorFooter } from './components/VisitorFooter.tsx';
@@ -178,10 +178,6 @@ function RouterView() {
   }
 
   const pageBackgroundStyle = resolveBackgroundStyle(routeBgRaw);
-  const showAnnouncement =
-    isSettingEnabled(settings.announcement_enabled) && settings.announcement_text.trim().length > 0;
-  const announcementColor =
-    settings.announcement_bg_color || settings.primary_color || '#1E40AF';
   const backToTopEnabled = isSettingEnabled(settings.show_back_to_top);
 
   return (
@@ -189,17 +185,6 @@ function RouterView() {
       style={pageBackgroundStyle}
       className="min-h-screen flex flex-col bg-[#F8FAFC] transition-colors duration-300"
     >
-      {showAnnouncement && (
-        <div
-          style={{ backgroundColor: announcementColor }}
-          className="text-white text-xs sm:text-sm font-medium px-4 py-2.5 shadow-xs"
-        >
-          <div className="max-w-[1240px] mx-auto flex items-center justify-center gap-2 text-center">
-            <Megaphone className="w-4 h-4 shrink-0" />
-            <span>{settings.announcement_text}</span>
-          </div>
-        </div>
-      )}
       <VisitorHeader />
       <main className="flex-1">{publicContent}</main>
       <VisitorFooter />

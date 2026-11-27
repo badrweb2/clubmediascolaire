@@ -1,11 +1,14 @@
 import React from 'react';
-import { Info } from 'lucide-react';
+import { ExternalLink, Info } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { isSafeUrl, normalizeImageUrl } from '../lib/mediaUtils.ts';
+import { parseSocialLinksJson } from '../lib/settingsDefaults.ts';
+import { SocialBrandIcon, getSocialBrandColor } from './SocialBrandIcon.tsx';
 
 export function VisitorFooter() {
   const { navigate, settings } = useApp();
   const accentColor = settings.primary_color || '#1E40AF';
+  const socialLinks = parseSocialLinksJson(settings.social_links_json).filter((s) => s.enabled);
 
   const footerSections = [
     { label: settings.nav_videos_label || 'الفيديوهات', path: '/videos' },
@@ -103,6 +106,42 @@ export function VisitorFooter() {
             </div>
           </div>
         </div>
+
+        {/* Interactive Social Media Buttons */}
+        {socialLinks.length > 0 && (
+          <div className="py-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="text-xs sm:text-sm font-semibold text-slate-800">
+              روابط وقنوات التواصل الاجتماعي
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              {socialLinks.map((item) => {
+                const brandColor = getSocialBrandColor(item.icon);
+                return (
+                  <a
+                    key={item.id}
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={item.label}
+                    aria-label={item.label}
+                    className="group inline-flex items-center gap-2.5 pl-3.5 pr-2 py-1.5 rounded-xl border border-slate-200 bg-slate-50/70 text-slate-700 text-xs font-medium hover:bg-white hover:border-slate-300 hover:-translate-y-1 hover:scale-[1.03] hover:shadow-md active:scale-95 transition-all duration-300 whitespace-nowrap"
+                  >
+                    <span
+                      style={{ backgroundColor: `${brandColor}16`, color: brandColor }}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3"
+                    >
+                      <SocialBrandIcon icon={item.icon} className="w-4 h-4" />
+                    </span>
+                    <span className="group-hover:text-slate-950 transition-colors">
+                      {item.label}
+                    </span>
+                    <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-slate-600 transition-colors shrink-0" />
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
           <span>{settings.footer_note}</span>

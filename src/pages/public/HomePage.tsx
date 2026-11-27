@@ -1,12 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Award,
   BookOpen,
+  ChevronLeft,
+  ChevronRight,
   FolderKanban,
   Headphones,
   Image as ImageIcon,
   Layers,
+  Megaphone,
   Play,
   Search,
 } from 'lucide-react';
@@ -14,7 +17,7 @@ import { useApp } from '../../context/AppContext.tsx';
 import { WorkCard } from '../../components/WorkCard.tsx';
 import { AudioRadioPlayer } from '../../components/MediaPlayer.tsx';
 import { isSafeUrl, normalizeImageUrl } from '../../lib/mediaUtils.ts';
-import { isSettingEnabled } from '../../lib/settingsDefaults.ts';
+import { isSettingEnabled, parseHeroExtraCoversJson } from '../../lib/settingsDefaults.ts';
 import { resolveBackgroundStyle, resolveCardRadiusClass } from '../../lib/themePresets.ts';
 import type { Category, PlatformSettings, PublicSiteStats, WorkItem } from '../../types.ts';
 
@@ -42,7 +45,9 @@ export function HomePage() {
   } = useApp();
   const [data, setData] = useState<BootstrapPayload | null>(null);
   const [loading, setLoading] = useState(true);
-  const [heroImgError, setHeroImgError] = useState(false);
+  const [failedHeroUrls, setFailedHeroUrls] = useState<Record<string, boolean>>({});
+  const [heroSlideIdx, setHeroSlideIdx] = useState(0);
+  const [heroHovered, setHeroHovered] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -75,12 +80,42 @@ export function HomePage() {
   const totalPublishedCount = mainCategories.reduce((sum, c) => sum + (c.item_count || 0), 0);
   const accentColor = settings.primary_color || '#1E40AF';
   const heroZoom = isSettingEnabled(settings.hero_zoom_enabled);
+  const animationsEnabled = isSettingEnabled(settings.enable_animations);
   const cardBgStyle = resolveBackgroundStyle(settings.bg_cards, { isCard: true });
   const radiusClass = resolveCardRadiusClass(settings.card_radius);
   const homeBgStyle = resolveBackgroundStyle(settings.bg_home || settings.bg_site);
   const isFourCols = settings.cards_per_row === '4';
   const cardsGridClass = isFourCols ? 'lg:grid-cols-4' : 'lg:grid-cols-3';
   const featuredLimit = isFourCols ? 4 : 3;
+
+  const heroImages = useMemo(() => {
+    const primary = normalizeImageUrl(settings.hero_cover_url);
+    const extras = parseHeroExtraCoversJson(settings.hero_extra_covers_json);
+    const merged = [primary, ...extras].filter(
+      (url, idx, arr) => Boolean(url) && isSafeUrl(url) && arr.indexOf(url) === idx && !failedHeroUrls[url]
+    );
+    return merged;
+  }, [settings.hero_cover_url, settings.hero_extra_covers_json, failedHeroUrls]);
+
+  useEffect(() => {
+    if (heroSlideIdx >= heroImages.length) {
+      setHeroSlideIdx(0);
+    }
+  }, [heroSlideIdx, heroImages.length]);
+
+  useEffect(() => {
+    if (heroImages.length <= 1 || heroHovered || !animationsEnabled) return;
+    const timer = window.setInterval(() => {
+      setHeroSlideIdx((prev) => (prev + 1) % heroImages.length);
+    }, 5500);
+    return () => window.clearInterval(timer);
+  }, [heroImages.length, heroHovered, animationsEnabled]);
+
+  const announcementText = (settings.announcement_text || '').trim();
+  const showAnnouncement = isSettingEnabled(settings.announcement_enabled) && announcementText.length > 0;
+  const announcementIsArabic = /[\u0600-\u06FF]/.test(announcementText);
+  const announcementColor = settings.announcement_bg_color || accentColor;
+  const tickerDurationSec = Math.max(14, Math.min(34, Math.round(announcementText.length * 0.24)));
 
   return (
     <div className="space-y-16 md:space-y-20">
@@ -137,21 +172,80 @@ export function HomePage() {
               </div>
             </div>
 
-            {/* Hero Cover Image */}
+            {/* Hero Cover Image / Multi-Image Carousel */}
             <div className="lg:col-span-6">
-              <div className="group relative h-full min-h-[280px] lg:min-h-[380px] rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-xs">
-                {isSafeUrl(normalizeImageUrl(settings.hero_cover_url)) && !heroImgError ? (
-                  <img
-                    src={normalizeImageUrl(settings.hero_cover_url)}
-                    alt={settings.platform_title}
-                    referrerPolicy="no-referrer"
-                    onError={() => setHeroImgError(true)}
-                    className={`w-full h-full lg:h-full object-cover transition-transform duration-700 ${
-                      heroZoom ? 'animate-hero-zoom' : ''
-                    }`}
-                  />
+              <div
+                onMouseEnter={() => setHeroHovered(true)}
+                onMouseLeave={() => setHeroHovered(false)}
+                className="group relative h-full min-h-[280px] lg:min-h-[380px] rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-xs"
+              >
+                {heroImages.length > 0 ? (
+                  <>
+                    {heroImages.map((imgUrl, idx) => {
+                      const isActive = idx === heroSlideIdx;
+                      return (
+                        <img
+                          key={imgUrl}
+                          src={imgUrl}
+                          alt={`${settings.platform_title} (${idx + 1})`}
+                          referrerPolicy="no-referrer"
+                          onError={() =>
+                            setFailedHeroUrls((prev) => ({ ...prev, [imgUrl]: true }))
+                          }
+                          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ${
+                            isActive ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none z-0'
+                          } ${heroZoom && isActive ? 'animate-hero-zoom' : ''}`}
+                        />
+                      );
+                    })}
+
+                    {heroImages.length > 1 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setHeroSlideIdx(
+                              (prev) => (prev - 1 + heroImages.length) % heroImages.length
+                            )
+                          }
+                          aria-label="الصورة السابقة"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-slate-900/55 text-white hover:bg-slate-900/80 backdrop-blur-xs flex items-center justify-center transition-all opacity-85 sm:opacity-0 sm:group-hover:opacity-100 cursor-pointer"
+                        >
+                          <ChevronRight className="w-5 h-5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setHeroSlideIdx((prev) => (prev + 1) % heroImages.length)
+                          }
+                          aria-label="الصورة التالية"
+                          className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-slate-900/55 text-white hover:bg-slate-900/80 backdrop-blur-xs flex items-center justify-center transition-all opacity-85 sm:opacity-0 sm:group-hover:opacity-100 cursor-pointer"
+                        >
+                          <ChevronLeft className="w-5 h-5" />
+                        </button>
+
+                        <div className="absolute bottom-3 inset-x-0 z-20 flex items-center justify-center gap-2 px-4">
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/55 backdrop-blur-xs">
+                            {heroImages.map((imgUrl, idx) => (
+                              <button
+                                key={imgUrl}
+                                type="button"
+                                onClick={() => setHeroSlideIdx(idx)}
+                                aria-label={`الانتقال إلى الصورة ${idx + 1}`}
+                                className={`h-2 rounded-full transition-all cursor-pointer ${
+                                  idx === heroSlideIdx
+                                    ? 'w-6 bg-white'
+                                    : 'w-2 bg-white/55 hover:bg-white/85'
+                                }`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
                 ) : (
-                  <div className="w-full h-full bg-gradient-to-br from-slate-100 to-slate-200 flex flex-col items-center justify-center p-8 text-slate-500">
+                  <div className="w-full h-full min-h-[280px] lg:min-h-[380px] bg-gradient-to-br from-slate-100 to-slate-200 flex flex-col items-center justify-center p-8 text-slate-500">
                     <BookOpen className="w-12 h-12 text-[#1E40AF] mb-3" />
                     <span className="text-sm font-medium">{settings.platform_title}</span>
                   </div>
@@ -159,6 +253,36 @@ export function HomePage() {
               </div>
             </div>
           </div>
+
+          {/* News Ticker Announcement Bar — HomePage Only, Below Hero Image */}
+          {showAnnouncement && (
+            <div
+              role="region"
+              aria-label="شريط الإعلانات والتنبيهات"
+              style={{ backgroundColor: announcementColor }}
+              className="mt-7 rounded-xl text-white shadow-sm overflow-hidden border border-black/10"
+            >
+              <div className="flex items-stretch">
+                <div className="bg-black/20 px-3.5 sm:px-4 py-2.5 flex items-center gap-2 shrink-0 border-l border-white/15">
+                  <Megaphone className="w-4 h-4 shrink-0" />
+                  <span className="text-xs sm:text-sm font-bold whitespace-nowrap">
+                    {announcementIsArabic ? 'إعلان هام' : 'Annonce'}
+                  </span>
+                </div>
+                <div className="ticker-viewport flex-1 py-2.5 flex items-center min-w-0">
+                  <div
+                    dir={announcementIsArabic ? 'rtl' : 'ltr'}
+                    style={{ '--ticker-duration': `${tickerDurationSec}s` } as React.CSSProperties}
+                    className={`ticker-track text-xs sm:text-sm font-medium px-4 ${
+                      announcementIsArabic ? 'animate-ticker-ltr' : 'animate-ticker-rtl'
+                    }`}
+                  >
+                    {announcementText}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 4-Column Real Institutional Statistics Row */}
           {isSettingEnabled(settings.show_stats_bar) && (

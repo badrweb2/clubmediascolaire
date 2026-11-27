@@ -1,4 +1,11 @@
-import type { FaqItem, PlatformSettings } from '../types.ts';
+import type {
+  FaqItem,
+  PlatformSettings,
+  SocialIconKey,
+  SocialLinkItem,
+  UiSoundPreset,
+} from '../types.ts';
+import { isSafeUrl, normalizeImageUrl } from './mediaUtils.ts';
 
 export const DEFAULT_FAQ_ITEMS: FaqItem[] = [
   {
@@ -21,6 +28,81 @@ export const DEFAULT_FAQ_ITEMS: FaqItem[] = [
     answer:
       'يمكنكم التوجه إلى صفحة «إنتاجات» من القائمة الرئيسية، واستخدام شريط البحث الفوري أو خيارات التصفية حسب التصنيف، نوع المحتوى، والمستوى الدراسي.',
   },
+];
+
+export const DEFAULT_SOCIAL_LINKS: SocialLinkItem[] = [
+  {
+    id: 'social-clubmedia',
+    label: 'موقع النادي الإعلامي',
+    url: 'https://elhassanedakhil.wixsite.com/clubmedia',
+    icon: 'website',
+    enabled: true,
+  },
+  {
+    id: 'social-classenumerique',
+    label: 'يوتيوب القسم الرقمي',
+    url: 'https://www.youtube.com/@classenumerique-bweb',
+    icon: 'youtube',
+    enabled: true,
+  },
+  {
+    id: 'social-interactmath',
+    label: 'صفحة InteractMath',
+    url: 'https://www.facebook.com/interactmath',
+    icon: 'facebook',
+    enabled: true,
+  },
+  {
+    id: 'social-badrweb',
+    label: 'قناة بدر ويب',
+    url: 'https://www.youtube.com/@badrweb',
+    icon: 'youtube',
+    enabled: true,
+  },
+];
+
+export const VALID_UI_SOUND_PRESETS: UiSoundPreset[] = [
+  'classic',
+  'soft',
+  'chime',
+  'playful',
+  'crisp',
+];
+
+export const UI_SOUND_PRESET_OPTIONS: Array<{
+  id: UiSoundPreset;
+  label: string;
+  description: string;
+}> = [
+  { id: 'classic', label: 'كلاسيكي أكاديمي (الافتراضي)', description: 'نغمة نقر وتنقل واضحة ومتوازنة' },
+  { id: 'soft', label: 'هادئ وناعم', description: 'لمسة صوتية خفيفة ومريحة للسمع' },
+  { id: 'chime', label: 'رنين مدرسي بلوري', description: 'رنين موسيقي مشرق عند التنقل' },
+  { id: 'playful', label: 'طفولي مبهج', description: 'نغمات مرحة مناسبة لأنشطة التلاميذ' },
+  { id: 'crisp', label: 'نقرة حديثة سريعة', description: 'استجابة إيقاعية خفيفة وحادة' },
+];
+
+export const VALID_SOCIAL_ICONS: SocialIconKey[] = [
+  'website',
+  'youtube',
+  'facebook',
+  'instagram',
+  'x',
+  'tiktok',
+  'telegram',
+  'whatsapp',
+  'mail',
+];
+
+export const SOCIAL_ICON_OPTIONS: Array<{ value: SocialIconKey; label: string }> = [
+  { value: 'website', label: 'موقع إلكتروني (Globe)' },
+  { value: 'youtube', label: 'يوتيوب (YouTube)' },
+  { value: 'facebook', label: 'فيسبوك (Facebook)' },
+  { value: 'instagram', label: 'إنستغرام (Instagram)' },
+  { value: 'x', label: 'إكس / تويتر (X)' },
+  { value: 'tiktok', label: 'تيك توك (TikTok)' },
+  { value: 'telegram', label: 'تيليغرام (Telegram)' },
+  { value: 'whatsapp', label: 'واتساب (WhatsApp)' },
+  { value: 'mail', label: 'بريد إلكتروني (Email)' },
 ];
 
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
@@ -109,6 +191,9 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   show_back_to_top: '1',
   hidden_nav_keys_json: '[]',
   custom_nav_items_json: '[]',
+  hero_extra_covers_json: '[]',
+  ui_sound_preset: 'classic',
+  social_links_json: JSON.stringify(DEFAULT_SOCIAL_LINKS),
 };
 
 export const ALL_ADMIN_PERMISSIONS = [
@@ -152,8 +237,10 @@ const EXPLICIT_EMPTY_ALLOWED_PREFIXES = [
   'bg_',
   'announcement_',
   'hero_zoom_',
+  'hero_extra_',
   'hidden_nav_',
   'custom_nav_',
+  'social_',
 ];
 
 export function mergePlatformSettings(rawMap: Record<string, string | undefined>): PlatformSettings {
@@ -228,6 +315,64 @@ export function parseHiddenNavKeys(raw: string): string[] {
     return parsed.filter((k): k is string => typeof k === 'string' && k.trim().length > 0);
   } catch {
     return [];
+  }
+}
+
+export function isSafeSocialUrl(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  if (/^mailto:[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(trimmed)) return true;
+  return isSafeUrl(trimmed);
+}
+
+export function parseHeroExtraCoversJson(raw: string | undefined): string[] {
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of parsed) {
+      if (typeof item !== 'string') continue;
+      const norm = normalizeImageUrl(item);
+      if (!norm || !isSafeUrl(norm) || seen.has(norm)) continue;
+      seen.add(norm);
+      out.push(norm);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+export function parseSocialLinksJson(raw: string | undefined): SocialLinkItem[] {
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_SOCIAL_LINKS;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DEFAULT_SOCIAL_LINKS;
+    return parsed
+      .filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) &&
+          typeof item === 'object' &&
+          typeof (item as { url?: unknown }).url === 'string' &&
+          isSafeSocialUrl(String((item as { url?: unknown }).url))
+      )
+      .map((item, idx) => {
+        const iconRaw = String(item.icon || 'website') as SocialIconKey;
+        const icon = VALID_SOCIAL_ICONS.includes(iconRaw) ? iconRaw : 'website';
+        return {
+          id: typeof item.id === 'string' && item.id ? item.id : `social-${idx + 1}`,
+          label:
+            typeof item.label === 'string' && item.label.trim()
+              ? item.label.trim().slice(0, 60)
+              : 'رابط خارجي',
+          url: String(item.url).trim(),
+          icon,
+          enabled: item.enabled !== false,
+        };
+      });
+  } catch {
+    return DEFAULT_SOCIAL_LINKS;
   }
 }
 

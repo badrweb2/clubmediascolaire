@@ -10,6 +10,9 @@ import {
   ALL_ADMIN_PERMISSIONS,
   DEFAULT_PLATFORM_SETTINGS,
   SETTING_KEYS,
+  VALID_SOCIAL_ICONS,
+  VALID_UI_SOUND_PRESETS,
+  isSafeSocialUrl,
   mergePlatformSettings,
 } from '../../src/lib/settingsDefaults.ts';
 import {
@@ -2512,6 +2515,75 @@ export async function onRequest(context: EventContext): Promise<Response> {
               !/^#[0-9a-fA-F]{6}$/.test(trimmed)
             ) {
               return jsonResponse({ error: `صيغة اللون المدخل للحقل ${k} غير صالحة.` }, 400);
+            }
+            if (k === 'hero_extra_covers_json') {
+              try {
+                const parsed = JSON.parse(trimmed || '[]');
+                if (!Array.isArray(parsed)) {
+                  return jsonResponse({ error: 'قائمة صور الغلاف الإضافية غير صالحة.' }, 400);
+                }
+                const cleanList: string[] = [];
+                for (const rawItem of parsed) {
+                  if (typeof rawItem !== 'string') continue;
+                  const norm = normalizeImageUrl(rawItem);
+                  if (!norm) continue;
+                  if (!isSafeUrl(norm)) {
+                    return jsonResponse({ error: 'أحد روابط صور الغلاف الإضافية غير صالح.' }, 400);
+                  }
+                  if (!cleanList.includes(norm)) cleanList.push(norm);
+                }
+                trimmed = JSON.stringify(cleanList);
+              } catch {
+                return jsonResponse({ error: 'صيغة قائمة صور الغلاف الإضافية غير صالحة.' }, 400);
+              }
+            }
+            if (k === 'ui_sound_preset') {
+              if (!VALID_UI_SOUND_PRESETS.includes(trimmed as (typeof VALID_UI_SOUND_PRESETS)[number])) {
+                trimmed = 'classic';
+              }
+            }
+            if (k === 'social_links_json') {
+              try {
+                const parsed = JSON.parse(trimmed || '[]');
+                if (!Array.isArray(parsed)) {
+                  return jsonResponse({ error: 'قائمة روابط التواصل الاجتماعي غير صالحة.' }, 400);
+                }
+                const cleanSocial: Array<{
+                  id: string;
+                  label: string;
+                  url: string;
+                  icon: string;
+                  enabled: boolean;
+                }> = [];
+                for (let idx = 0; idx < parsed.length; idx++) {
+                  const entry = parsed[idx] as Record<string, unknown>;
+                  if (!entry || typeof entry !== 'object') continue;
+                  const rawUrl = typeof entry.url === 'string' ? entry.url.trim() : '';
+                  if (!rawUrl || !isSafeSocialUrl(rawUrl)) {
+                    return jsonResponse(
+                      { error: 'أحد روابط التواصل الاجتماعي غير صالح (يجب أن يبدأ بـ https:// أو http://).' },
+                      400
+                    );
+                  }
+                  const iconRaw = String(entry.icon || 'website');
+                  const icon = VALID_SOCIAL_ICONS.includes(iconRaw as (typeof VALID_SOCIAL_ICONS)[number])
+                    ? iconRaw
+                    : 'website';
+                  cleanSocial.push({
+                    id: typeof entry.id === 'string' && entry.id ? entry.id.slice(0, 50) : `social-${idx + 1}`,
+                    label:
+                      typeof entry.label === 'string' && entry.label.trim()
+                        ? entry.label.trim().slice(0, 60)
+                        : 'رابط خارجي',
+                    url: rawUrl,
+                    icon,
+                    enabled: entry.enabled !== false,
+                  });
+                }
+                trimmed = JSON.stringify(cleanSocial);
+              } catch {
+                return jsonResponse({ error: 'صيغة بيانات روابط التواصل الاجتماعي غير صالحة.' }, 400);
+              }
             }
             stmts.push(
               db

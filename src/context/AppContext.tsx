@@ -5,7 +5,12 @@ import {
   DEFAULT_PLATFORM_SETTINGS,
   isSettingEnabled,
 } from '../lib/settingsDefaults.ts';
-import { initGlobalUiSounds, playNavSound, setUiSoundsEnabled } from '../lib/uiSounds.ts';
+import {
+  initGlobalUiSounds,
+  playNavSound,
+  setUiSoundPreset,
+  setUiSoundsEnabled,
+} from '../lib/uiSounds.ts';
 import { resolveFontFamilyStack } from '../lib/themePresets.ts';
 
 interface SessionOptions {
@@ -93,6 +98,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setUiSoundsEnabled(isSettingEnabled(settings.enable_ui_sounds));
   }, [settings.enable_ui_sounds]);
+
+  useEffect(() => {
+    setUiSoundPreset(settings.ui_sound_preset);
+  }, [settings.ui_sound_preset]);
 
   useEffect(() => {
     const stack = resolveFontFamilyStack(settings.font_family);

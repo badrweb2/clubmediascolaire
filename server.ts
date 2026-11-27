@@ -30,7 +30,13 @@ import {
 } from './server/security.ts';
 import type { AdminRequest } from './server/security.ts';
 import { isSafeUrl, normalizeImageUrl, parseMediaUrlClient } from './src/lib/mediaUtils.ts';
-import { ALL_ADMIN_PERMISSIONS, SETTING_KEYS } from './src/lib/settingsDefaults.ts';
+import {
+  ALL_ADMIN_PERMISSIONS,
+  SETTING_KEYS,
+  VALID_SOCIAL_ICONS,
+  VALID_UI_SOUND_PRESETS,
+  isSafeSocialUrl,
+} from './src/lib/settingsDefaults.ts';
 import { isSafeBackgroundValue, normalizeBackgroundValue } from './src/lib/themePresets.ts';
 import type { AdminUserSummary, ContentType, ExtraMediaItem, PublishStatus, SourceMethod } from './src/types.ts';
 
@@ -1410,6 +1416,78 @@ app.put('/api/admin/settings', requirePermission('manage_settings'), (req, res) 
       ) {
         res.status(400).json({ error: `صيغة اللون المدخل للحقل ${key} غير صالحة.` });
         return;
+      }
+      if (key === 'hero_extra_covers_json') {
+        try {
+          const parsed = JSON.parse(trimmed || '[]');
+          if (!Array.isArray(parsed)) {
+            res.status(400).json({ error: 'قائمة صور الغلاف الإضافية غير صالحة.' });
+            return;
+          }
+          const cleanList: string[] = [];
+          for (const rawItem of parsed) {
+            if (typeof rawItem !== 'string') continue;
+            const norm = normalizeImageUrl(rawItem);
+            if (!norm) continue;
+            if (!isSafeUrl(norm)) {
+              res.status(400).json({ error: 'أحد روابط صور الغلاف الإضافية غير صالح.' });
+              return;
+            }
+            if (!cleanList.includes(norm)) cleanList.push(norm);
+          }
+          trimmed = JSON.stringify(cleanList);
+        } catch {
+          res.status(400).json({ error: 'صيغة قائمة صور الغلاف الإضافية غير صالحة.' });
+          return;
+        }
+      }
+      if (key === 'ui_sound_preset') {
+        if (!VALID_UI_SOUND_PRESETS.includes(trimmed as (typeof VALID_UI_SOUND_PRESETS)[number])) {
+          trimmed = 'classic';
+        }
+      }
+      if (key === 'social_links_json') {
+        try {
+          const parsed = JSON.parse(trimmed || '[]');
+          if (!Array.isArray(parsed)) {
+            res.status(400).json({ error: 'قائمة روابط التواصل الاجتماعي غير صالحة.' });
+            return;
+          }
+          const cleanSocial: Array<{
+            id: string;
+            label: string;
+            url: string;
+            icon: string;
+            enabled: boolean;
+          }> = [];
+          for (let idx = 0; idx < parsed.length; idx++) {
+            const entry = parsed[idx] as Record<string, unknown>;
+            if (!entry || typeof entry !== 'object') continue;
+            const rawUrl = typeof entry.url === 'string' ? entry.url.trim() : '';
+            if (!rawUrl || !isSafeSocialUrl(rawUrl)) {
+              res.status(400).json({ error: 'أحد روابط التواصل الاجتماعي غير صالح (يجب أن يبدأ بـ https:// أو http://).' });
+              return;
+            }
+            const iconRaw = String(entry.icon || 'website');
+            const icon = VALID_SOCIAL_ICONS.includes(iconRaw as (typeof VALID_SOCIAL_ICONS)[number])
+              ? iconRaw
+              : 'website';
+            cleanSocial.push({
+              id: typeof entry.id === 'string' && entry.id ? entry.id.slice(0, 50) : `social-${idx + 1}`,
+              label:
+                typeof entry.label === 'string' && entry.label.trim()
+                  ? entry.label.trim().slice(0, 60)
+                  : 'رابط خارجي',
+              url: rawUrl,
+              icon,
+              enabled: entry.enabled !== false,
+            });
+          }
+          trimmed = JSON.stringify(cleanSocial);
+        } catch {
+          res.status(400).json({ error: 'صيغة بيانات روابط التواصل الاجتماعي غير صالحة.' });
+          return;
+        }
       }
       upsert.run(key, trimmed);
     }

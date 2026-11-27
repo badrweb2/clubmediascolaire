@@ -147,6 +147,30 @@ export interface PlatformSettings {
   show_back_to_top: string;
   hidden_nav_keys_json: string;
   custom_nav_items_json: string;
+  hero_extra_covers_json: string;
+  ui_sound_preset: string;
+  social_links_json: string;
+}
+
+export type UiSoundPreset = 'classic' | 'soft' | 'chime' | 'playful' | 'crisp';
+
+export type SocialIconKey =
+  | 'website'
+  | 'youtube'
+  | 'facebook'
+  | 'instagram'
+  | 'x'
+  | 'tiktok'
+  | 'telegram'
+  | 'whatsapp'
+  | 'mail';
+
+export interface SocialLinkItem {
+  id: string;
+  label: string;
+  url: string;
+  icon: SocialIconKey;
+  enabled: boolean;
 }
 
 export interface CustomNavItem {
