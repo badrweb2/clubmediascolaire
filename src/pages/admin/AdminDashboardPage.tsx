@@ -16,15 +16,15 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { AdminLayout } from './AdminLayout.tsx';
+import { ConfirmActionDropdown } from '../../components/ConfirmActionDropdown.tsx';
 import { CONTENT_TYPE_LABELS, formatArabicDate } from '../../lib/mediaUtils.ts';
 import type { AdminStats } from '../../types.ts';
 
 export function AdminDashboardPage() {
-  const { apiFetch, navigate } = useApp();
+  const { apiFetch, navigate, hasPermission } = useApp();
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
 
   const loadStats = useCallback(async () => {
@@ -48,7 +48,6 @@ export function AdminDashboardPage() {
     setResetting(true);
     try {
       await apiFetch('/api/admin/stats/reset', { method: 'POST' });
-      setConfirmReset(false);
       await loadStats();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر تصفير العدادات.');
@@ -91,49 +90,39 @@ export function AdminDashboardPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => setConfirmReset(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium hover:bg-slate-50 cursor-pointer whitespace-nowrap"
-            >
-              <RotateCcw className="w-4 h-4" />
-              <span>تصفير عدادات الزيارات</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/admin/add')}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#1E40AF] text-white text-sm font-medium hover:bg-[#1E3A8A] cursor-pointer whitespace-nowrap"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>إضافة محتوى جديد</span>
-            </button>
+            {hasPermission('manage_settings') && (
+              <ConfirmActionDropdown
+                variant="warning"
+                title="تأكيد تصفير العدادات"
+                message="هل تريد تصفير جميع عدادات الزيارات والمشاهدات والبدء من الصفر؟"
+                confirmLabel="تأكيد التصفير"
+                busy={resetting}
+                busyLabel="جاري التصفير..."
+                onConfirm={handleResetStats}
+                renderTrigger={({ onClick }) => (
+                  <button
+                    type="button"
+                    onClick={onClick}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs sm:text-sm font-medium hover:bg-slate-50 cursor-pointer whitespace-nowrap"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span>تصفير عدادات الزيارات</span>
+                  </button>
+                )}
+              />
+            )}
+            {hasPermission('manage_works') && (
+              <button
+                type="button"
+                onClick={() => navigate('/admin/add')}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#1E40AF] text-white text-sm font-medium hover:bg-[#1E3A8A] cursor-pointer whitespace-nowrap"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>إضافة محتوى جديد</span>
+              </button>
+            )}
           </div>
         </div>
-
-        {confirmReset && (
-          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <p className="text-xs sm:text-sm text-amber-900">
-              هل تريد تصفير جميع عدادات الزيارات والمشاهدات والبدء من الصفر؟
-            </p>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setConfirmReset(false)}
-                className="px-3 py-1.5 rounded-lg border border-amber-300 bg-white text-xs text-slate-700 cursor-pointer"
-              >
-                إلغاء
-              </button>
-              <button
-                type="button"
-                disabled={resetting}
-                onClick={handleResetStats}
-                className="px-3 py-1.5 rounded-lg bg-amber-700 text-white text-xs font-medium hover:bg-amber-800 disabled:opacity-60 cursor-pointer"
-              >
-                {resetting ? 'جاري التصفير...' : 'تأكيد التصفير'}
-              </button>
-            </div>
-          </div>
-        )}
 
         {error && (
           <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-sm text-rose-800">
@@ -227,13 +216,23 @@ export function AdminDashboardPage() {
                       {item.views_count}
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/admin/edit/${item.id}`)}
-                        className="text-xs font-medium text-[#1E40AF] hover:underline cursor-pointer"
-                      >
-                        تعديل ومعاينة
-                      </button>
+                      {hasPermission('manage_works') ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/admin/edit/${item.id}`)}
+                          className="text-xs font-medium text-[#1E40AF] hover:underline cursor-pointer"
+                        >
+                          تعديل ومعاينة
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/work/${item.id}`)}
+                          className="text-xs font-medium text-slate-600 hover:underline cursor-pointer"
+                        >
+                          معاينة
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

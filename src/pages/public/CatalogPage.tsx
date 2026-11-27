@@ -60,7 +60,7 @@ const MODE_META: Record<CatalogMode, { title: string; subtitle: string }> = {
 };
 
 export function CatalogPage({ mode }: CatalogPageProps) {
-  const { searchParams, categories, navigate } = useApp();
+  const { searchParams, categories, navigate, settings } = useApp();
   const meta = MODE_META[mode];
 
   const [query, setQuery] = useState('');
@@ -72,7 +72,9 @@ export function CatalogPage({ mode }: CatalogPageProps) {
   );
   const [selectedGrade, setSelectedGrade] = useState<string>('');
   const [dateFrom, setDateFrom] = useState<string>('');
-  const [sort, setSort] = useState<string>(() => searchParams.get('sort') || 'custom');
+  const [sort, setSort] = useState<string>(
+    () => searchParams.get('sort') || settings.default_catalog_sort || 'custom'
+  );
 
   const [items, setItems] = useState<WorkItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,8 +86,8 @@ export function CatalogPage({ mode }: CatalogPageProps) {
     const params = new URLSearchParams(searchKey);
     setSelectedType(params.get('contentType') || '');
     setSelectedCategoryId(params.get('categoryId') || '');
-    setSort(params.get('sort') || 'custom');
-  }, [mode, searchKey]);
+    setSort(params.get('sort') || settings.default_catalog_sort || 'custom');
+  }, [mode, searchKey, settings.default_catalog_sort]);
 
   const mainCategories = useMemo(
     () => categories.filter((c) => c.parent_id === null),

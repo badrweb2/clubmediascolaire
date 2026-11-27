@@ -6,6 +6,7 @@ import { WorkCard } from '../../components/WorkCard.tsx';
 import { CONTENT_TYPE_LABELS, formatArabicDate } from '../../lib/mediaUtils.ts';
 import { getCornerTargetForCategory } from '../../lib/categoryMapping.ts';
 import { isSettingEnabled } from '../../lib/settingsDefaults.ts';
+import { resolveBackgroundStyle, resolveCardRadiusClass } from '../../lib/themePresets.ts';
 import type { WorkItem } from '../../types.ts';
 
 export function WorkDetailPage({ workId }: { workId: number }) {
@@ -169,6 +170,8 @@ export function WorkDetailPage({ workId }: { workId: number }) {
     .filter((c): c is NonNullable<typeof c> => Boolean(c));
   const showViews = isSettingEnabled(settings.show_view_counts);
   const showShare = isSettingEnabled(settings.show_share_button);
+  const cardBgStyle = resolveBackgroundStyle(settings.bg_cards, { isCard: true });
+  const radiusClass = resolveCardRadiusClass(settings.card_radius);
 
   return (
     <div className="max-w-[1080px] mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-12">
@@ -265,7 +268,10 @@ export function WorkDetailPage({ workId }: { workId: number }) {
 
         {/* Description & Structured Accession Metadata */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 pt-2">
-          <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+          <div
+            style={cardBgStyle}
+            className={`lg:col-span-7 bg-white border border-slate-200 ${radiusClass} p-6 space-y-4`}
+          >
             <h2 className="font-display text-lg font-semibold text-slate-900">
               نبذة عن الإنتاج
             </h2>
@@ -281,7 +287,10 @@ export function WorkDetailPage({ workId }: { workId: number }) {
             )}
           </div>
 
-          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6">
+          <div
+            style={cardBgStyle}
+            className={`lg:col-span-5 bg-white border border-slate-200 ${radiusClass} p-6`}
+          >
             <h2 className="font-display text-lg font-semibold text-slate-900 mb-4">
               بطاقة التوثيق
             </h2>

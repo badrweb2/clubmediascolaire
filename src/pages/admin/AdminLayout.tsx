@@ -19,16 +19,42 @@ interface AdminLayoutProps {
 }
 
 export function AdminLayout({ title, children }: AdminLayoutProps) {
-  const { pathname, navigate, settings, auth, clearSession } = useApp();
+  const { pathname, navigate, settings, auth, clearSession, hasPermission } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const menuItems = [
-    { label: 'لوحة التحكم والإحصائيات', path: '/admin', icon: LayoutDashboard },
-    { label: 'إضافة محتوى جديد', path: '/admin/add', icon: PlusCircle },
-    { label: 'إدارة المحتويات', path: '/admin/works', icon: ListChecks },
-    { label: 'إدارة التصنيفات', path: '/admin/categories', icon: FolderTree },
-    { label: 'إعدادات المنصة', path: '/admin/settings', icon: Settings },
+  const allMenuItems: Array<{
+    label: string;
+    path: string;
+    icon: React.ComponentType<{ className?: string }>;
+    visible: boolean;
+  }> = [
+    { label: 'لوحة التحكم والإحصائيات', path: '/admin', icon: LayoutDashboard, visible: true },
+    {
+      label: 'إضافة محتوى جديد',
+      path: '/admin/add',
+      icon: PlusCircle,
+      visible: hasPermission('manage_works'),
+    },
+    {
+      label: 'إدارة المحتويات',
+      path: '/admin/works',
+      icon: ListChecks,
+      visible: hasPermission('manage_works'),
+    },
+    {
+      label: 'إدارة التصنيفات',
+      path: '/admin/categories',
+      icon: FolderTree,
+      visible: hasPermission('manage_categories'),
+    },
+    {
+      label: 'إعدادات المنصة',
+      path: '/admin/settings',
+      icon: Settings,
+      visible: hasPermission('manage_settings') || hasPermission('manage_users'),
+    },
   ];
+  const menuItems = allMenuItems.filter((m) => m.visible);
 
   const handleNav = (path: string) => {
     navigate(path);
@@ -186,16 +212,19 @@ export function AdminLayout({ title, children }: AdminLayoutProps) {
 
           <div className="flex items-center gap-3 shrink-0">
             <span className="hidden sm:inline text-xs text-slate-500">
-              المدير: <strong className="text-slate-800">{auth.username}</strong>
+              {auth.isPrimary ? 'المدير:' : 'المشرف:'}{' '}
+              <strong className="text-slate-800">{auth.displayName || auth.username}</strong>
             </span>
-            <button
-              type="button"
-              onClick={() => navigate('/admin/add')}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#1E40AF] text-white text-xs font-medium hover:bg-[#1E3A8A] cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>إضافة إنتاج</span>
-            </button>
+            {hasPermission('manage_works') && (
+              <button
+                type="button"
+                onClick={() => navigate('/admin/add')}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#1E40AF] text-white text-xs font-medium hover:bg-[#1E3A8A] cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span>إضافة إنتاج</span>
+              </button>
+            )}
           </div>
         </header>
 

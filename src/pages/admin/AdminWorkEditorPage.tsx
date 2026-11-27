@@ -23,6 +23,7 @@ import { useApp } from '../../context/AppContext.tsx';
 import { AdminLayout } from './AdminLayout.tsx';
 import { MediaPlayer } from '../../components/MediaPlayer.tsx';
 import { ConfirmDeleteDropdown } from '../../components/ConfirmDeleteDropdown.tsx';
+import { ConfirmActionDropdown } from '../../components/ConfirmActionDropdown.tsx';
 import {
   CONTENT_TYPE_LABELS,
   GRADE_LEVELS,
@@ -69,7 +70,7 @@ const PRESET_THUMBNAILS = [
 ];
 
 export function AdminWorkEditorPage({ editId }: { editId?: number }) {
-  const { apiFetch, navigate, refreshPublicBootstrap, searchParams } = useApp();
+  const { apiFetch, navigate, refreshPublicBootstrap, searchParams, hasPermission } = useApp();
   const fromQuery = searchParams.get('from') || '';
 
   const [categories, setCategories] = useState<Category[]>([]);
@@ -1345,25 +1346,55 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
             {/* Action Buttons */}
             <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => handleSave('published')}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#1E40AF] text-white text-sm font-medium hover:bg-[#1E3A8A] disabled:opacity-60 cursor-pointer"
-                >
-                  <Send className="w-4 h-4" />
-                  <span>{status === 'published' ? 'تحديث ونشر التعديلات' : 'نشر الإنتاج الآن'}</span>
-                </button>
+                <ConfirmActionDropdown
+                  variant="primary"
+                  title={status === 'published' ? 'تأكيد تحديث المحتوى' : 'تأكيد نشر الإنتاج'}
+                  message={
+                    status === 'published'
+                      ? `هل تريد حفظ وتحديث بيانات «${title || 'هذا الإنتاج'}» في المنصة؟`
+                      : `هل تريد نشر «${title || 'هذا الإنتاج'}» ليظهر لجميع زوار المنصة؟`
+                  }
+                  confirmLabel={status === 'published' ? 'تأكيد التحديث' : 'نعم، نشر الآن'}
+                  busy={saving}
+                  busyLabel="جاري الحفظ..."
+                  onConfirm={() => handleSave('published')}
+                  renderTrigger={({ onClick }) => (
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={onClick}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#1E40AF] text-white text-sm font-medium hover:bg-[#1E3A8A] disabled:opacity-60 cursor-pointer"
+                    >
+                      <Send className="w-4 h-4" />
+                      <span>{status === 'published' ? 'تحديث ونشر التعديلات' : 'نشر الإنتاج الآن'}</span>
+                    </button>
+                  )}
+                />
 
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => handleSave('draft')}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white border border-slate-300 text-slate-800 text-sm font-medium hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>{status === 'published' ? 'إلغاء النشر وحفظ كمسودة' : 'حفظ كمسودة'}</span>
-                </button>
+                <ConfirmActionDropdown
+                  variant="warning"
+                  title="تأكيد الحفظ كمسودة"
+                  message={
+                    status === 'published'
+                      ? `هل تريد إلغاء نشر «${title || 'هذا الإنتاج'}» وتحويله إلى مسودة داخلية؟`
+                      : `هل تريد حفظ «${title || 'هذا الإنتاج'}» كمسودة داخلية؟`
+                  }
+                  confirmLabel="تأكيد الحفظ"
+                  busy={saving}
+                  busyLabel="جاري الحفظ..."
+                  onConfirm={() => handleSave('draft')}
+                  renderTrigger={({ onClick }) => (
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={onClick}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white border border-slate-300 text-slate-800 text-sm font-medium hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>{status === 'published' ? 'إلغاء النشر وحفظ كمسودة' : 'حفظ كمسودة'}</span>
+                    </button>
+                  )}
+                />
 
                 <button
                   type="button"
@@ -1375,7 +1406,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                 </button>
               </div>
 
-              {editId && (
+              {editId && hasPermission('delete_works') && (
                 <ConfirmDeleteDropdown
                   title="تأكيد حذف الإنتاج"
                   message={`هل أنت متأكد من حذف «${title || 'هذا الإنتاج'}» نهائياً؟`}

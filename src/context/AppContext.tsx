@@ -1,6 +1,18 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import type { AuthState, Category, PlatformSettings, PublicSiteStats } from '../types.ts';
-import { DEFAULT_PLATFORM_SETTINGS } from '../lib/settingsDefaults.ts';
+import type { AdminPermission, AuthState, Category, PlatformSettings, PublicSiteStats } from '../types.ts';
+import {
+  ALL_ADMIN_PERMISSIONS,
+  DEFAULT_PLATFORM_SETTINGS,
+  isSettingEnabled,
+} from '../lib/settingsDefaults.ts';
+import { initGlobalUiSounds, playNavSound, setUiSoundsEnabled } from '../lib/uiSounds.ts';
+import { resolveFontFamilyStack } from '../lib/themePresets.ts';
+
+interface SessionOptions {
+  displayName?: string;
+  permissions?: AdminPermission[];
+  isPrimary?: boolean;
+}
 
 interface AppContextValue {
   pathname: string;
@@ -13,7 +25,13 @@ interface AppContextValue {
   refreshPublicBootstrap: () => Promise<void>;
   auth: AuthState;
   token: string | null;
-  setSession: (token: string, username: string, envManaged?: boolean) => void;
+  hasPermission: (perm: AdminPermission) => boolean;
+  setSession: (
+    token: string,
+    username: string,
+    envManaged?: boolean,
+    options?: SessionOptions
+  ) => void;
   clearSession: () => Promise<void>;
   refreshAuthStatus: () => Promise<void>;
   apiFetch: <T>(url: string, init?: RequestInit) => Promise<T>;
@@ -62,9 +80,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     needsSetup: false,
     authenticated: false,
     username: null,
+    permissions: [],
     envManaged: false,
   });
   const visitSentRef = useRef(false);
+
+  useEffect(() => {
+    const cleanupSounds = initGlobalUiSounds();
+    return cleanupSounds;
+  }, []);
+
+  useEffect(() => {
+    setUiSoundsEnabled(isSettingEnabled(settings.enable_ui_sounds));
+  }, [settings.enable_ui_sounds]);
+
+  useEffect(() => {
+    const stack = resolveFontFamilyStack(settings.font_family);
+    document.documentElement.style.setProperty('--font-sans', stack.sans);
+    document.documentElement.style.setProperty('--font-display', stack.display);
+  }, [settings.font_family]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -88,6 +122,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
     if (to !== current) {
+      playNavSound();
       window.history.pushState({}, '', to);
       setLocationUrl(to);
     }
@@ -108,7 +143,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!res.ok) {
         if (res.status === 401 && token) {
           setToken(null);
-          setAuth((prev) => ({ ...prev, authenticated: false, username: null }));
+          setAuth((prev) => ({
+            ...prev,
+            authenticated: false,
+            username: null,
+            permissions: [],
+            isPrimary: false,
+          }));
         }
         throw new Error((data as { error?: string }).error || 'حدث خطأ أثناء الاتصال بالخادم.');
       }
@@ -141,7 +182,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch('/api/auth/status', { headers });
       if (!res.ok) return;
       const data = (await res.json()) as AuthState;
-      setAuth(data);
+      setAuth({
+        ...data,
+        permissions: Array.isArray(data.permissions) ? data.permissions : [],
+      });
       if (!data.authenticated && token) {
         setToken(null);
       }
@@ -198,15 +242,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
   }, []);
 
-  const setSession = useCallback((nextToken: string, username: string, envManaged = false) => {
-    setToken(nextToken);
-    setAuth({
-      needsSetup: false,
-      authenticated: true,
-      username,
-      envManaged,
-    });
-  }, []);
+  const setSession = useCallback(
+    (
+      nextToken: string,
+      username: string,
+      envManaged = false,
+      options?: SessionOptions
+    ) => {
+      setToken(nextToken);
+      setAuth({
+        needsSetup: false,
+        authenticated: true,
+        username,
+        displayName: options?.displayName || username,
+        permissions: options?.permissions || [...ALL_ADMIN_PERMISSIONS],
+        isPrimary: options?.isPrimary ?? true,
+        envManaged,
+      });
+    },
+    []
+  );
+
+  const hasPermission = useCallback(
+    (perm: AdminPermission) => {
+      if (!auth.authenticated) return false;
+      if (auth.isPrimary || auth.envManaged) return true;
+      return Array.isArray(auth.permissions) && auth.permissions.includes(perm);
+    },
+    [auth]
+  );
 
   const clearSession = useCallback(async () => {
     if (token) {
@@ -224,6 +288,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ...prev,
       authenticated: false,
       username: null,
+      displayName: undefined,
+      permissions: [],
+      isPrimary: false,
     }));
   }, [token]);
 
@@ -244,6 +311,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         refreshPublicBootstrap,
         auth,
         token,
+        hasPermission,
         setSession,
         clearSession,
         refreshAuthStatus,

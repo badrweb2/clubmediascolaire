@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowRight, KeyRound, Lock, ShieldCheck, User } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { isSafeUrl } from '../../lib/mediaUtils.ts';
+import type { AdminPermission } from '../../types.ts';
 
 export function AdminLoginPage() {
   const { auth, setSession, navigate, settings, refreshAuthStatus } = useApp();
@@ -51,13 +52,20 @@ export function AdminLoginPage() {
       const data = (await res.json().catch(() => ({}))) as {
         token?: string;
         username?: string;
+        displayName?: string;
+        permissions?: AdminPermission[];
+        isPrimary?: boolean;
         envManaged?: boolean;
         error?: string;
       };
       if (!res.ok || !data.token) {
         throw new Error(data.error || 'تعذر تسجيل الدخول. تحقق من البيانات المدخلة.');
       }
-      setSession(data.token, data.username || username.trim(), Boolean(data.envManaged));
+      setSession(data.token, data.username || username.trim(), Boolean(data.envManaged), {
+        displayName: data.displayName,
+        permissions: data.permissions,
+        isPrimary: data.isPrimary,
+      });
       navigate('/admin');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'حدث خطأ غير متوقع.');

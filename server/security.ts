@@ -3,12 +3,14 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import type { Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
-import type { ContentType, LinkInspectionResult, SourceMethod } from '../src/types.ts';
+import type { AdminPermission, ContentType, LinkInspectionResult, SourceMethod } from '../src/types.ts';
+import { ALL_ADMIN_PERMISSIONS } from '../src/lib/settingsDefaults.ts';
 import {
   detectDirectFileType,
   extractGoogleDriveInfo,
   extractYouTubeId,
   isSafeUrl,
+  normalizeImageUrl,
 } from '../src/lib/mediaUtils.ts';
 
 const IN_MEMORY_SESSION_SECRET = crypto.randomBytes(32).toString('hex');
@@ -114,9 +116,49 @@ export function revokeAdminSession(tokenId: string): void {
   db.prepare('DELETE FROM admin_sessions WHERE token_id = ?').run(tokenId);
 }
 
+export function sanitizePermissions(raw: unknown): AdminPermission[] {
+  if (!Array.isArray(raw)) return [];
+  const allowed = new Set<string>(ALL_ADMIN_PERMISSIONS);
+  return Array.from(
+    new Set(
+      raw.filter((p): p is AdminPermission => typeof p === 'string' && allowed.has(p))
+    )
+  );
+}
+
+export function parseStoredPermissions(rawJson: string | undefined, isPrimary: boolean): AdminPermission[] {
+  if (isPrimary) return [...ALL_ADMIN_PERMISSIONS];
+  try {
+    return sanitizePermissions(JSON.parse(rawJson || '[]'));
+  } catch {
+    return [];
+  }
+}
+
+export interface DbAdminUserRow {
+  id: number;
+  username: string;
+  password_hash: string;
+  display_name: string;
+  permissions_json: string;
+  is_active: number;
+  is_primary: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function getAdminUserByUsername(username: string): DbAdminUserRow | undefined {
+  return db
+    .prepare('SELECT * FROM admin_users WHERE username = ?')
+    .get(username) as DbAdminUserRow | undefined;
+}
+
 export interface AdminRequest extends Request {
   adminUsername?: string;
+  adminDisplayName?: string;
   adminTokenId?: string;
+  adminPermissions?: AdminPermission[];
+  adminIsPrimary?: boolean;
 }
 
 export function requireAdmin(req: AdminRequest, res: Response, next: NextFunction): void {
@@ -131,9 +173,42 @@ export function requireAdmin(req: AdminRequest, res: Response, next: NextFunctio
     res.status(401).json({ error: 'انتهت صلاحية الجلسة أو الرمز غير صالح.' });
     return;
   }
-  req.adminUsername = verified.username;
+
+  if (isEnvAdminConfigured()) {
+    req.adminUsername = verified.username;
+    req.adminDisplayName = verified.username;
+    req.adminTokenId = verified.tokenId;
+    req.adminPermissions = [...ALL_ADMIN_PERMISSIONS];
+    req.adminIsPrimary = true;
+    next();
+    return;
+  }
+
+  const user = getAdminUserByUsername(verified.username);
+  if (!user || !user.is_active) {
+    if (verified.tokenId) revokeAdminSession(verified.tokenId);
+    res.status(401).json({ error: 'تم تعطيل هذا الحساب أو لم يعد موجوداً.' });
+    return;
+  }
+
+  req.adminUsername = user.username;
+  req.adminDisplayName = user.display_name || user.username;
   req.adminTokenId = verified.tokenId;
+  req.adminIsPrimary = Boolean(user.is_primary);
+  req.adminPermissions = parseStoredPermissions(user.permissions_json, Boolean(user.is_primary));
   next();
+}
+
+export function requirePermission(permission: AdminPermission) {
+  return (req: AdminRequest, res: Response, next: NextFunction): void => {
+    requireAdmin(req, res, () => {
+      if (req.adminIsPrimary || req.adminPermissions?.includes(permission)) {
+        next();
+        return;
+      }
+      res.status(403).json({ error: 'ليس لديك الصلاحية المطلوبة لتنفيذ هذه المهمة.' });
+    });
+  };
 }
 
 function isPrivateIpAddress(ip: string): boolean {
@@ -332,7 +407,7 @@ export async function inspectExternalMediaUrl(
         detected_content_type: inferredType,
         original_url: trimmed,
         embed_url: driveInfo.embedUrl,
-        thumbnail_url: '',
+        thumbnail_url: inferredType === 'image' ? normalizeImageUrl(trimmed) : '',
         media_mime: 'text/html',
         embed_status: 'ok',
         message: 'رابط Google Drive متاح للمعاينة العامة وتم تحويله إلى مشغل مدمج.',
@@ -347,7 +422,7 @@ export async function inspectExternalMediaUrl(
         detected_content_type: inferredType,
         original_url: trimmed,
         embed_url: driveInfo.embedUrl,
-        thumbnail_url: '',
+        thumbnail_url: inferredType === 'image' ? normalizeImageUrl(trimmed) : '',
         media_mime: 'text/html',
         embed_status: 'warning',
         message: 'تم تحويل رابط Google Drive إلى صيغة التضمين الرسمية. يُرجى التأكد من صلاحيات المشاركة.',

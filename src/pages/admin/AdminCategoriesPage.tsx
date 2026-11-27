@@ -3,6 +3,7 @@ import { Check, Edit3, FolderPlus, Layers, Trash2, X } from 'lucide-react';
 import { useApp } from '../../context/AppContext.tsx';
 import { AdminLayout } from './AdminLayout.tsx';
 import { ConfirmDeleteDropdown } from '../../components/ConfirmDeleteDropdown.tsx';
+import { ConfirmActionDropdown } from '../../components/ConfirmActionDropdown.tsx';
 import type { Category } from '../../types.ts';
 
 export function AdminCategoriesPage() {
@@ -33,10 +34,12 @@ export function AdminCategoriesPage() {
 
   const mainCategories = categories.filter((c) => c.parent_id === null);
 
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAdd = async () => {
     setFeedback(null);
-    if (!newName.trim()) return;
+    if (!newName.trim()) {
+      setFeedback({ type: 'error', text: 'يرجى كتابة اسم التصنيف قبل الحفظ.' });
+      return;
+    }
     try {
       const res = await apiFetch<{ categories: Category[] }>('/api/admin/categories', {
         method: 'POST',
@@ -126,7 +129,7 @@ export function AdminCategoriesPage() {
 
         {/* Add Category Form */}
         <form
-          onSubmit={handleAdd}
+          onSubmit={(e) => e.preventDefault()}
           className="bg-white border border-slate-200 rounded-xl p-6 space-y-4"
         >
           <h2 className="font-display text-base font-bold text-slate-900 flex items-center gap-2">
@@ -181,13 +184,27 @@ export function AdminCategoriesPage() {
             </div>
           </div>
 
-          <button
-            type="submit"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1E40AF] text-white text-sm font-medium hover:bg-[#1E3A8A] cursor-pointer"
-          >
-            <FolderPlus className="w-4 h-4" />
-            <span>حفظ التصنيف</span>
-          </button>
+          <ConfirmActionDropdown
+            variant="primary"
+            title="تأكيد إضافة التصنيف"
+            message={
+              newName.trim()
+                ? `هل تريد حفظ التصنيف الجديد «${newName.trim()}» وإضافته للمنصة؟`
+                : 'سيتم التحقق من الاسم وحفظ التصنيف الجديد.'
+            }
+            confirmLabel="تأكيد الإضافة"
+            onConfirm={handleAdd}
+            renderTrigger={({ onClick }) => (
+              <button
+                type="button"
+                onClick={onClick}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1E40AF] text-white text-sm font-medium hover:bg-[#1E3A8A] cursor-pointer"
+              >
+                <FolderPlus className="w-4 h-4" />
+                <span>حفظ التصنيف</span>
+              </button>
+            )}
+          />
         </form>
 
         {/* Categories Tree List */}
@@ -221,13 +238,23 @@ export function AdminCategoriesPage() {
                           className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm flex-1"
                         />
                         <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleSaveEdit(cat.id)}
-                            className="p-2 rounded-lg bg-emerald-600 text-white cursor-pointer"
-                          >
-                            <Check className="w-4 h-4" />
-                          </button>
+                          <ConfirmActionDropdown
+                            variant="primary"
+                            title="تأكيد تعديل التصنيف"
+                            message={`هل تريد حفظ التعديل على التصنيف «${editName.trim() || cat.name}»؟`}
+                            confirmLabel="حفظ التعديل"
+                            onConfirm={() => handleSaveEdit(cat.id)}
+                            renderTrigger={({ onClick }) => (
+                              <button
+                                type="button"
+                                onClick={onClick}
+                                title="حفظ التعديل"
+                                className="p-2 rounded-lg bg-emerald-600 text-white cursor-pointer"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                            )}
+                          />
                           <button
                             type="button"
                             onClick={() => setEditingId(null)}
@@ -300,13 +327,23 @@ export function AdminCategoriesPage() {
                                 onChange={(e) => setEditName(e.target.value)}
                                 className="px-2.5 py-1 rounded-lg border border-slate-300 text-sm flex-1"
                               />
-                              <button
-                                type="button"
-                                onClick={() => handleSaveEdit(sub.id)}
-                                className="p-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                              </button>
+                              <ConfirmActionDropdown
+                                variant="primary"
+                                title="تأكيد تعديل التصنيف الفرعي"
+                                message={`هل تريد حفظ التعديل على التصنيف الفرعي «${editName.trim() || sub.name}»؟`}
+                                confirmLabel="حفظ التعديل"
+                                onConfirm={() => handleSaveEdit(sub.id)}
+                                renderTrigger={({ onClick }) => (
+                                  <button
+                                    type="button"
+                                    onClick={onClick}
+                                    title="حفظ التعديل"
+                                    className="p-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              />
                               <button
                                 type="button"
                                 onClick={() => setEditingId(null)}

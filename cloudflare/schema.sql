@@ -2,6 +2,10 @@ CREATE TABLE IF NOT EXISTS admin_users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
+  permissions_json TEXT NOT NULL DEFAULT '[]',
+  is_active INTEGER NOT NULL DEFAULT 1,
+  is_primary INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -46,6 +50,7 @@ CREATE TABLE IF NOT EXISTS work_items (
   extra_media TEXT NOT NULL DEFAULT '[]',
   category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
   subcategory_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  extra_category_ids TEXT NOT NULL DEFAULT '[]',
   keywords TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'published',
   featured INTEGER NOT NULL DEFAULT 0,

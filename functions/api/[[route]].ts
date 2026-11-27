@@ -7,11 +7,18 @@ import {
   parseMediaUrlClient,
 } from '../../src/lib/mediaUtils.ts';
 import {
+  ALL_ADMIN_PERMISSIONS,
   DEFAULT_PLATFORM_SETTINGS,
   SETTING_KEYS,
   mergePlatformSettings,
 } from '../../src/lib/settingsDefaults.ts';
+import {
+  isSafeBackgroundValue,
+  normalizeBackgroundValue,
+} from '../../src/lib/themePresets.ts';
 import type {
+  AdminPermission,
+  AdminUserSummary,
   Category,
   ContentType,
   ExtraMediaItem,
@@ -194,6 +201,10 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '',
+      permissions_json TEXT NOT NULL DEFAULT '[]',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      is_primary INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`),
@@ -680,6 +691,53 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
     await db.batch(extraStmts);
   }
 
+  const { results: adminCols = [] } = await db
+    .prepare(`PRAGMA table_info(admin_users)`)
+    .all<{ name: string }>();
+  if (!adminCols.some((c) => c.name === 'display_name')) {
+    await db.prepare(`ALTER TABLE admin_users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`).run();
+  }
+  if (!adminCols.some((c) => c.name === 'permissions_json')) {
+    await db.prepare(`ALTER TABLE admin_users ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '[]'`).run();
+  }
+  if (!adminCols.some((c) => c.name === 'is_active')) {
+    await db.prepare(`ALTER TABLE admin_users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`).run();
+  }
+  if (!adminCols.some((c) => c.name === 'is_primary')) {
+    await db.prepare(`ALTER TABLE admin_users ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0`).run();
+  }
+
+  const rbacMigrated = await db
+    .prepare(`SELECT value FROM platform_settings WHERE key = '_internal_admin_rbac_migrated'`)
+    .first<{ value: string }>();
+  if (rbacMigrated?.value !== '1') {
+    const firstAdmin = await db
+      .prepare('SELECT id, username FROM admin_users ORDER BY id ASC LIMIT 1')
+      .first<{ id: number; username: string }>();
+    const stmts: D1PreparedStatement[] = [];
+    if (firstAdmin) {
+      const allPermsJson = JSON.stringify([...ALL_ADMIN_PERMISSIONS]);
+      stmts.push(
+        db
+          .prepare(
+            `UPDATE admin_users
+             SET is_primary = 1,
+                 is_active = 1,
+                 display_name = CASE WHEN TRIM(display_name) = '' THEN username ELSE display_name END,
+                 permissions_json = ?
+             WHERE id = ?`
+          )
+          .bind(allPermsJson, firstAdmin.id)
+      );
+    }
+    stmts.push(
+      db.prepare(
+        `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('_internal_admin_rbac_migrated', '1')`
+      )
+    );
+    await db.batch(stmts);
+  }
+
   initializedD1 = true;
 }
 
@@ -1025,6 +1083,219 @@ async function verifyBearerD1(
   } catch {
     return { valid: false };
   }
+}
+
+interface AdminUserRowD1 {
+  id: number;
+  username: string;
+  password_hash: string;
+  display_name: string;
+  permissions_json: string;
+  is_active: number;
+  is_primary: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function sanitizePermissionsD1(raw: unknown): AdminPermission[] {
+  if (!Array.isArray(raw)) return [];
+  const allowed = new Set<string>(ALL_ADMIN_PERMISSIONS);
+  const out: AdminPermission[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string' && allowed.has(item) && !out.includes(item as AdminPermission)) {
+      out.push(item as AdminPermission);
+    }
+  }
+  return out;
+}
+
+function parseStoredPermissionsD1(rawJson: string | undefined, isPrimary: boolean): AdminPermission[] {
+  if (isPrimary) return [...ALL_ADMIN_PERMISSIONS];
+  try {
+    const parsed = JSON.parse(rawJson || '[]');
+    const clean = sanitizePermissionsD1(parsed);
+    return clean;
+  } catch {
+    return [];
+  }
+}
+
+async function getAdminUserD1(db: D1Database, username: string): Promise<AdminUserRowD1 | null> {
+  return db
+    .prepare(
+      'SELECT id, username, password_hash, display_name, permissions_json, is_active, is_primary, created_at, updated_at FROM admin_users WHERE username = ?'
+    )
+    .bind(username)
+    .first<AdminUserRowD1>();
+}
+
+async function listAdminUsersD1(db: D1Database): Promise<AdminUserSummary[]> {
+  const { results = [] } = await db
+    .prepare(
+      'SELECT id, username, display_name, permissions_json, is_active, is_primary, created_at, updated_at FROM admin_users ORDER BY is_primary DESC, id ASC'
+    )
+    .all<AdminUserRowD1>();
+  return results.map((r) => ({
+    id: Number(r.id),
+    username: String(r.username),
+    display_name: String(r.display_name || r.username),
+    permissions: parseStoredPermissionsD1(String(r.permissions_json || '[]'), Boolean(r.is_primary)),
+    is_active: Boolean(r.is_active),
+    is_primary: Boolean(r.is_primary),
+    created_at: String(r.created_at || ''),
+    updated_at: String(r.updated_at || ''),
+  }));
+}
+
+interface VerifiedAdminAccessD1 {
+  ok: boolean;
+  status?: number;
+  error?: string;
+  username?: string;
+  displayName?: string;
+  tokenId?: string;
+  permissions: AdminPermission[];
+  isPrimary: boolean;
+}
+
+async function verifyAdminAccessD1(
+  db: D1Database,
+  env: Env,
+  req: Request,
+  envConfigured: boolean
+): Promise<VerifiedAdminAccessD1> {
+  const bearer = await verifyBearerD1(db, env, req);
+  if (!bearer.valid || !bearer.username) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'غير مصرح بالوصول. يرجى تسجيل دخول المدير أولاً.',
+      permissions: [],
+      isPrimary: false,
+    };
+  }
+
+  if (envConfigured) {
+    return {
+      ok: true,
+      username: bearer.username,
+      displayName: bearer.username,
+      tokenId: bearer.tokenId,
+      permissions: [...ALL_ADMIN_PERMISSIONS],
+      isPrimary: true,
+    };
+  }
+
+  const user = await getAdminUserD1(db, bearer.username);
+  if (!user || !user.is_active) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'تم تعطيل الحساب أو انتهت الجلسة. يرجى إعادة تسجيل الدخول.',
+      permissions: [],
+      isPrimary: false,
+    };
+  }
+
+  return {
+    ok: true,
+    username: user.username,
+    displayName: user.display_name || user.username,
+    tokenId: bearer.tokenId,
+    permissions: parseStoredPermissionsD1(user.permissions_json, Boolean(user.is_primary)),
+    isPrimary: Boolean(user.is_primary),
+  };
+}
+
+function hasPermissionD1(access: VerifiedAdminAccessD1, perm: AdminPermission): boolean {
+  return access.isPrimary || access.permissions.includes(perm);
+}
+
+function sanitizeWorkPayloadEdge(body: Record<string, unknown>) {
+  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  const originalUrl = typeof body.original_url === 'string' ? body.original_url.trim() : '';
+  if (!title) return { error: 'يرجى كتابة عنوان الإنتاج.' } as const;
+  if (!originalUrl || !isSafeUrl(originalUrl)) {
+    return { error: 'يرجى إدخال رابط محتوى صالح (يبدأ بـ https:// أو http://).' } as const;
+  }
+
+  const preferredMethod = VALID_SOURCE_METHODS.includes(body.source_method as SourceMethod)
+    ? (body.source_method as SourceMethod)
+    : 'direct';
+  const preferredType = VALID_CONTENT_TYPES.includes(body.content_type as ContentType)
+    ? (body.content_type as ContentType)
+    : 'video';
+  const parsed = parseMediaUrlClient(originalUrl, preferredMethod, preferredType);
+  if (!parsed.valid) return { error: parsed.error || 'رابط غير صالح.' } as const;
+
+  const contentType: ContentType = VALID_CONTENT_TYPES.includes(body.content_type as ContentType)
+    ? (body.content_type as ContentType)
+    : parsed.contentType;
+  const sourceMethod: SourceMethod = VALID_SOURCE_METHODS.includes(body.source_method as SourceMethod)
+    ? (body.source_method as SourceMethod)
+    : parsed.sourceMethod;
+
+  const categoryId = Number(body.category_id);
+  if (!Number.isInteger(categoryId) || categoryId <= 0) {
+    return { error: 'يرجى اختيار التصنيف الرئيسي.' } as const;
+  }
+  const subcategoryId =
+    body.subcategory_id !== null && body.subcategory_id !== undefined && body.subcategory_id !== ''
+      ? Number(body.subcategory_id)
+      : null;
+  const validSubId = subcategoryId && Number.isInteger(subcategoryId) ? subcategoryId : null;
+  const galleryUrls = Array.isArray(body.gallery_urls)
+    ? body.gallery_urls
+        .filter((u): u is string => typeof u === 'string' && isSafeUrl(u))
+        .map((u) => normalizeImageUrl(u))
+    : [];
+  const extraMedia = sanitizeExtraMediaEdge(body.extra_media);
+  const extraCategoryIds = sanitizeExtraCategoryIdsEdge(body.extra_category_ids, categoryId, validSubId);
+  const rawOrder = Number(body.sort_order);
+  const sortOrder =
+    body.sort_order !== undefined &&
+    body.sort_order !== null &&
+    body.sort_order !== '' &&
+    Number.isFinite(rawOrder) &&
+    rawOrder >= 0
+      ? Math.floor(rawOrder)
+      : 0;
+  const publishDate =
+    typeof body.publish_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.publish_date.trim())
+      ? body.publish_date.trim()
+      : new Date().toISOString().slice(0, 10);
+
+  return {
+    data: {
+      title,
+      description: typeof body.description === 'string' ? body.description.trim() : '',
+      student_name: typeof body.student_name === 'string' ? body.student_name.trim() : '',
+      grade_level: typeof body.grade_level === 'string' ? body.grade_level.trim() : '',
+      class_section: typeof body.class_section === 'string' ? body.class_section.trim() : '',
+      publish_date: publishDate,
+      content_type: contentType,
+      source_method: sourceMethod,
+      original_url: originalUrl,
+      embed_url:
+        typeof body.embed_url === 'string' && isSafeUrl(body.embed_url) ? body.embed_url.trim() : parsed.embedUrl,
+      media_mime: typeof body.media_mime === 'string' ? body.media_mime : parsed.mediaMime,
+      thumbnail_url:
+        typeof body.thumbnail_url === 'string' && isSafeUrl(body.thumbnail_url)
+          ? normalizeImageUrl(body.thumbnail_url)
+          : parsed.thumbnailUrl,
+      gallery_urls: JSON.stringify(galleryUrls),
+      extra_media: JSON.stringify(extraMedia),
+      category_id: categoryId,
+      subcategory_id: validSubId,
+      extra_category_ids: JSON.stringify(extraCategoryIds),
+      keywords: typeof body.keywords === 'string' ? body.keywords.trim() : '',
+      status: VALID_STATUSES.includes(body.status as PublishStatus) ? (body.status as PublishStatus) : 'draft',
+      featured: body.featured ? 1 : 0,
+      embed_status: body.embed_status === 'warning' || body.embed_status === 'blocked' ? body.embed_status : 'ok',
+      embed_note: typeof body.embed_note === 'string' ? body.embed_note.trim() : '',
+      sort_order: sortOrder,
+    },
+  } as const;
 }
 
 function createSampleWavBytes(variant: 'ep1' | 'ep2'): ArrayBuffer {
@@ -1480,12 +1751,15 @@ export async function onRequest(context: EventContext): Promise<Response> {
   if (method === 'GET' && path === '/api/auth/status') {
     const row = await db.prepare('SELECT COUNT(*) as count FROM admin_users').first<{ count: number }>();
     const hasDbAdmin = Number(row?.count || 0) > 0;
-    const verified = await verifyBearerD1(db, env, request);
-    if (verified.valid && verified.username) {
+    const access = await verifyAdminAccessD1(db, env, request, envConfigured);
+    if (access.ok && access.username) {
       return jsonResponse({
         needsSetup: false,
         authenticated: true,
-        username: verified.username,
+        username: access.username,
+        displayName: access.displayName || access.username,
+        permissions: access.permissions,
+        isPrimary: access.isPrimary,
         envManaged: envConfigured,
       });
     }
@@ -1493,6 +1767,7 @@ export async function onRequest(context: EventContext): Promise<Response> {
       needsSetup: !envConfigured && !hasDbAdmin,
       authenticated: false,
       username: null,
+      permissions: [],
       envManaged: envConfigured,
     });
   }
@@ -1504,7 +1779,7 @@ export async function onRequest(context: EventContext): Promise<Response> {
     const body = (await request.json().catch(() => ({}))) as { username?: string; password?: string };
     const username = typeof body.username === 'string' ? body.username.trim() : '';
     const password = typeof body.password === 'string' ? body.password : '';
-    if (username.length < 3 || password.length < 6) {
+    if (username.length < 3 || username.length > 40 || password.length < 6 || password.length > 128) {
       return jsonResponse({ error: 'اسم المستخدم (3+ أحرف) وكلمة المرور (6+ أحرف) مطلوبان.' }, 400);
     }
     const existing = await db.prepare('SELECT COUNT(*) as count FROM admin_users').first<{ count: number }>();
@@ -1512,12 +1787,25 @@ export async function onRequest(context: EventContext): Promise<Response> {
       return jsonResponse({ error: 'تم إنشاء حساب المدير مسبقاً.' }, 409);
     }
     const hash = await hashPasswordWeb(password);
+    const allPermsJson = JSON.stringify([...ALL_ADMIN_PERMISSIONS]);
     await db
-      .prepare('INSERT INTO admin_users (username, password_hash) VALUES (?, ?)')
-      .bind(username, hash)
+      .prepare(
+        'INSERT INTO admin_users (username, password_hash, display_name, permissions_json, is_active, is_primary) VALUES (?, ?, ?, ?, 1, 1)'
+      )
+      .bind(username, hash, username, allPermsJson)
       .run();
     const token = await createSessionD1(db, env, username);
-    return jsonResponse({ token, username, envManaged: false }, 201);
+    return jsonResponse(
+      {
+        token,
+        username,
+        displayName: username,
+        permissions: [...ALL_ADMIN_PERMISSIONS],
+        isPrimary: true,
+        envManaged: false,
+      },
+      201
+    );
   }
 
   if (method === 'POST' && path === '/api/auth/login') {
@@ -1532,19 +1820,34 @@ export async function onRequest(context: EventContext): Promise<Response> {
       const expectedPass = env.ADMIN_PASSWORD || '';
       if ((await safeTextCompare(username, expectedUser)) && (await safeTextCompare(password, expectedPass))) {
         const token = await createSessionD1(db, env, expectedUser);
-        return jsonResponse({ token, username: expectedUser, envManaged: true });
+        return jsonResponse({
+          token,
+          username: expectedUser,
+          displayName: expectedUser,
+          permissions: [...ALL_ADMIN_PERMISSIONS],
+          isPrimary: true,
+          envManaged: true,
+        });
       }
       return jsonResponse({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' }, 401);
     }
-    const userRow = await db
-      .prepare('SELECT username, password_hash FROM admin_users WHERE username = ?')
-      .bind(username)
-      .first<{ username: string; password_hash: string }>();
+    const userRow = await getAdminUserD1(db, username);
     if (!userRow || !(await verifyPasswordWeb(password, userRow.password_hash))) {
       return jsonResponse({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' }, 401);
     }
+    if (!userRow.is_active) {
+      return jsonResponse({ error: 'هذا الحساب معطل حالياً. يرجى التواصل مع المدير العام للمنصة.' }, 403);
+    }
+    const permissions = parseStoredPermissionsD1(userRow.permissions_json, Boolean(userRow.is_primary));
     const token = await createSessionD1(db, env, userRow.username);
-    return jsonResponse({ token, username: userRow.username, envManaged: false });
+    return jsonResponse({
+      token,
+      username: userRow.username,
+      displayName: userRow.display_name || userRow.username,
+      permissions,
+      isPrimary: Boolean(userRow.is_primary),
+      envManaged: false,
+    });
   }
 
   if (method === 'POST' && path === '/api/auth/logout') {
@@ -1558,9 +1861,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
 
   // Protected Admin Routes
   if (path.startsWith('/api/admin/') || path === '/api/auth/change-password') {
-    const auth = await verifyBearerD1(db, env, request);
-    if (!auth.valid || !auth.username) {
-      return jsonResponse({ error: 'غير مصرح بالوصول. يرجى تسجيل دخول المدير أولاً.' }, 401);
+    const auth = await verifyAdminAccessD1(db, env, request, envConfigured);
+    if (!auth.ok || !auth.username) {
+      return jsonResponse({ error: auth.error || 'غير مصرح بالوصول. يرجى تسجيل دخول المدير أولاً.' }, auth.status || 401);
     }
 
     if (method === 'POST' && path === '/api/auth/change-password') {
@@ -1572,23 +1875,41 @@ export async function onRequest(context: EventContext): Promise<Response> {
         newUsername?: string;
         newPassword?: string;
       };
-      const row = await db
-        .prepare('SELECT id, username, password_hash FROM admin_users WHERE username = ?')
-        .bind(auth.username)
-        .first<{ id: number; username: string; password_hash: string }>();
+      const row = await getAdminUserD1(db, auth.username);
       if (!row || !(await verifyPasswordWeb(body.currentPassword || '', row.password_hash))) {
         return jsonResponse({ error: 'كلمة المرور الحالية غير صحيحة.' }, 401);
       }
-      const targetUsername = body.newUsername && body.newUsername.trim().length >= 3 ? body.newUsername.trim() : row.username;
-      if (body.newPassword && body.newPassword.length < 6) {
+      const newUsername = typeof body.newUsername === 'string' ? body.newUsername.trim() : '';
+      const newPassword = typeof body.newPassword === 'string' ? body.newPassword : '';
+      if (newUsername && (newUsername.length < 3 || newUsername.length > 40)) {
+        return jsonResponse({ error: 'يجب أن يتكون اسم المستخدم من 3 إلى 40 حرفاً.' }, 400);
+      }
+      if (newPassword && (newPassword.length < 6 || newPassword.length > 128)) {
         return jsonResponse({ error: 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.' }, 400);
       }
-      const nextHash = body.newPassword ? await hashPasswordWeb(body.newPassword) : row.password_hash;
-      await db
-        .prepare(`UPDATE admin_users SET username = ?, password_hash = ?, updated_at = datetime('now') WHERE id = ?`)
-        .bind(targetUsername, nextHash, row.id)
-        .run();
-      return jsonResponse({ ok: true, username: targetUsername });
+      const targetUsername = newUsername.length >= 3 ? newUsername : row.username;
+      if (targetUsername !== row.username && (await getAdminUserD1(db, targetUsername))) {
+        return jsonResponse({ error: 'اسم المستخدم الجديد مستخدم بالفعل.' }, 409);
+      }
+      const nextHash = newPassword ? await hashPasswordWeb(newPassword) : row.password_hash;
+      const stmts: D1PreparedStatement[] = [
+        db
+          .prepare(`UPDATE admin_users SET username = ?, password_hash = ?, updated_at = datetime('now') WHERE id = ?`)
+          .bind(targetUsername, nextHash, row.id),
+      ];
+      if (targetUsername !== row.username) {
+        stmts.push(
+          db.prepare(`UPDATE admin_sessions SET username = ? WHERE username = ?`).bind(targetUsername, row.username)
+        );
+      }
+      await db.batch(stmts);
+      return jsonResponse({
+        ok: true,
+        username: targetUsername,
+        displayName: row.display_name || targetUsername,
+        permissions: parseStoredPermissionsD1(row.permissions_json, Boolean(row.is_primary)),
+        isPrimary: Boolean(row.is_primary),
+      });
     }
 
     if (method === 'GET' && path === '/api/admin/stats') {
@@ -1631,6 +1952,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
     }
 
     if (method === 'POST' && path === '/api/admin/stats/reset') {
+      if (!hasPermissionD1(auth, 'manage_settings')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية تنفيذ هذه المهمة.' }, 403);
+      }
       await db.batch([
         db.prepare('DELETE FROM platform_visits'),
         db.prepare('UPDATE work_items SET views_count = 0'),
@@ -1638,7 +1962,130 @@ export async function onRequest(context: EventContext): Promise<Response> {
       return jsonResponse({ ok: true });
     }
 
+    // Admin Users Management
+    if (path === '/api/admin/users') {
+      if (!hasPermissionD1(auth, 'manage_users')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية إدارة المستخدمين.' }, 403);
+      }
+      if (method === 'GET') {
+        return jsonResponse({ users: await listAdminUsersD1(db), envManaged: envConfigured });
+      }
+      if (method === 'POST') {
+        if (envConfigured) {
+          return jsonResponse({ error: 'إدارة المستخدمين غير متاحة عند ضبط الحساب عبر متغيرات البيئة.' }, 400);
+        }
+        const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+        const username = typeof body.username === 'string' ? body.username.trim() : '';
+        const password = typeof body.password === 'string' ? body.password : '';
+        const displayName = typeof body.display_name === 'string' ? body.display_name.trim().slice(0, 80) : '';
+        const permissions = sanitizePermissionsD1(body.permissions);
+        const isActive = body.is_active !== false;
+
+        if (username.length < 3 || username.length > 40) {
+          return jsonResponse({ error: 'يجب أن يتكون اسم المستخدم من 3 إلى 40 حرفاً.' }, 400);
+        }
+        if (password.length < 6 || password.length > 128) {
+          return jsonResponse({ error: 'يجب أن تتكون كلمة المرور من 6 أحرف على الأقل.' }, 400);
+        }
+        if (permissions.length === 0) {
+          return jsonResponse({ error: 'يرجى تحديد مهمة واحدة على الأقل للمستخدم الجديد.' }, 400);
+        }
+        if (await getAdminUserD1(db, username)) {
+          return jsonResponse({ error: 'اسم المستخدم مسجل مسبقاً. اختر اسماً آخر.' }, 409);
+        }
+
+        const hash = await hashPasswordWeb(password);
+        await db
+          .prepare(
+            `INSERT INTO admin_users (username, password_hash, display_name, permissions_json, is_active, is_primary)
+             VALUES (?, ?, ?, ?, ?, 0)`
+          )
+          .bind(username, hash, displayName || username, JSON.stringify(permissions), isActive ? 1 : 0)
+          .run();
+        return jsonResponse({ users: await listAdminUsersD1(db) }, 201);
+      }
+    }
+
+    const adminUserIdMatch = path.match(/^\/api\/admin\/users\/(\d+)$/);
+    if (adminUserIdMatch) {
+      if (!hasPermissionD1(auth, 'manage_users')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية إدارة المستخدمين.' }, 403);
+      }
+      if (envConfigured) {
+        return jsonResponse({ error: 'إدارة المستخدمين غير متاحة عند ضبط الحساب عبر متغيرات البيئة.' }, 400);
+      }
+      const id = Number(adminUserIdMatch[1]);
+      const existing = await db
+        .prepare('SELECT * FROM admin_users WHERE id = ?')
+        .bind(id)
+        .first<AdminUserRowD1>();
+      if (!existing) {
+        return jsonResponse({ error: 'المستخدم غير موجود.' }, 404);
+      }
+
+      if (method === 'PUT') {
+        const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+        const nextDisplayName =
+          typeof body.display_name === 'string'
+            ? body.display_name.trim().slice(0, 80) || existing.username
+            : existing.display_name;
+        const nextPassword = typeof body.password === 'string' ? body.password : '';
+        const nextActive = body.is_active !== undefined ? Boolean(body.is_active) : Boolean(existing.is_active);
+        const nextPermissions =
+          existing.is_primary === 1
+            ? [...ALL_ADMIN_PERMISSIONS]
+            : body.permissions !== undefined
+              ? sanitizePermissionsD1(body.permissions)
+              : parseStoredPermissionsD1(existing.permissions_json, false);
+
+        if (existing.is_primary === 1 && !nextActive) {
+          return jsonResponse({ error: 'لا يمكن تعطيل حساب المدير الرئيسي للمنصة.' }, 400);
+        }
+        if (existing.username === auth.username && (!nextActive || !nextPermissions.includes('manage_users'))) {
+          return jsonResponse({ error: 'لا يمكنك إزالة صلاحية إدارة المستخدمين أو تعطيل حسابك الحالي.' }, 400);
+        }
+        if (nextPermissions.length === 0) {
+          return jsonResponse({ error: 'يجب تحديد مهمة واحدة على الأقل للمستخدم.' }, 400);
+        }
+        if (nextPassword && (nextPassword.length < 6 || nextPassword.length > 128)) {
+          return jsonResponse({ error: 'يجب أن تكون كلمة المرور الجديدة 6 أحرف على الأقل.' }, 400);
+        }
+        const nextHash = nextPassword ? await hashPasswordWeb(nextPassword) : existing.password_hash;
+        const stmts: D1PreparedStatement[] = [
+          db
+            .prepare(
+              `UPDATE admin_users
+               SET display_name = ?, password_hash = ?, permissions_json = ?, is_active = ?, updated_at = datetime('now')
+               WHERE id = ?`
+            )
+            .bind(nextDisplayName, nextHash, JSON.stringify(nextPermissions), nextActive ? 1 : 0, id),
+        ];
+        if (!nextActive) {
+          stmts.push(db.prepare('DELETE FROM admin_sessions WHERE username = ?').bind(existing.username));
+        }
+        await db.batch(stmts);
+        return jsonResponse({ users: await listAdminUsersD1(db) });
+      }
+
+      if (method === 'DELETE') {
+        if (existing.is_primary) {
+          return jsonResponse({ error: 'لا يمكن حذف حساب المدير الرئيسي للمنصة.' }, 400);
+        }
+        if (existing.username === auth.username) {
+          return jsonResponse({ error: 'لا يمكنك حذف حسابك أثناء تسجيل الدخول به.' }, 400);
+        }
+        await db.batch([
+          db.prepare('DELETE FROM admin_sessions WHERE username = ?').bind(existing.username),
+          db.prepare('DELETE FROM admin_users WHERE id = ?').bind(id),
+        ]);
+        return jsonResponse({ users: await listAdminUsersD1(db) });
+      }
+    }
+
     if (method === 'POST' && path === '/api/admin/inspect-link') {
+      if (!hasPermissionD1(auth, 'manage_works')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية تنفيذ هذه المهمة.' }, 403);
+      }
       const body = (await request.json().catch(() => ({}))) as {
         url?: string;
         source_method?: SourceMethod;
@@ -1650,6 +2097,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
     }
 
     if (method === 'GET' && path === '/api/admin/works') {
+      if (!hasPermissionD1(auth, 'manage_works')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية إدارة المحتويات.' }, 403);
+      }
       const q = (url.searchParams.get('q') || '').trim();
       const categoryId = url.searchParams.get('categoryId') ? Number(url.searchParams.get('categoryId')) : null;
       const contentType = (url.searchParams.get('contentType') || '').trim();
@@ -1686,6 +2136,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
     }
 
     if (method === 'PUT' && path === '/api/admin/works/reorder') {
+      if (!hasPermissionD1(auth, 'manage_works')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية ترتيب المحتويات.' }, 403);
+      }
       const body = (await request.json().catch(() => ({}))) as {
         orders?: Array<{ id?: unknown; sort_order?: unknown }>;
       };
@@ -1710,45 +2163,85 @@ export async function onRequest(context: EventContext): Promise<Response> {
       return jsonResponse({ ok: true });
     }
 
+    if (method === 'POST' && path === '/api/admin/works/bulk') {
+      if (!hasPermissionD1(auth, 'manage_works')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية إضافة المحتويات.' }, 403);
+      }
+      const body = (await request.json().catch(() => ({}))) as { items?: unknown[] };
+      const rawItems = Array.isArray(body.items) ? body.items : null;
+      if (!rawItems || rawItems.length === 0) {
+        return jsonResponse({ error: 'يرجى إرسال قائمة مشاريع صالحة للاستيراد.' }, 400);
+      }
+      if (rawItems.length > 100) {
+        return jsonResponse({ error: 'الحد الأقصى للاستيراد في الدفعة الواحدة هو 100 موضوع.' }, 400);
+      }
+
+      const prepared: Array<Extract<ReturnType<typeof sanitizeWorkPayloadEdge>, { data: unknown }>> = [];
+      for (let i = 0; i < rawItems.length; i++) {
+        const parsed = sanitizeWorkPayloadEdge((rawItems[i] || {}) as Record<string, unknown>);
+        if ('error' in parsed) {
+          return jsonResponse({ error: `السطر رقم ${i + 1}: ${parsed.error}` }, 400);
+        }
+        prepared.push(parsed);
+      }
+
+      const maxRow = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM work_items').first<{ m: number }>();
+      let nextOrder = Number(maxRow?.m || 0) + 1;
+
+      const insertSql = `
+        INSERT INTO work_items (
+          title, description, student_name, grade_level, class_section, publish_date,
+          content_type, source_method, original_url, embed_url, media_mime,
+          thumbnail_url, gallery_urls, extra_media, category_id, subcategory_id, extra_category_ids, keywords,
+          status, featured, embed_status, embed_note, sort_order, is_sample
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `;
+
+      const stmts = prepared.map((entry) => {
+        const d = entry.data;
+        const effectiveOrder = d.sort_order > 0 ? d.sort_order : nextOrder++;
+        return db
+          .prepare(insertSql)
+          .bind(
+            d.title,
+            d.description,
+            d.student_name,
+            d.grade_level,
+            d.class_section,
+            d.publish_date,
+            d.content_type,
+            d.source_method,
+            d.original_url,
+            d.embed_url,
+            d.media_mime,
+            d.thumbnail_url,
+            d.gallery_urls,
+            d.extra_media,
+            d.category_id,
+            d.subcategory_id,
+            d.extra_category_ids,
+            d.keywords,
+            d.status,
+            d.featured,
+            d.embed_status,
+            d.embed_note,
+            effectiveOrder
+          );
+      });
+
+      await db.batch(stmts);
+      return jsonResponse({ inserted: prepared.length }, 201);
+    }
+
     if (method === 'POST' && path === '/api/admin/works') {
+      if (!hasPermissionD1(auth, 'manage_works')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية إضافة المحتويات.' }, 403);
+      }
       const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-      const title = typeof body.title === 'string' ? body.title.trim() : '';
-      const originalUrl = typeof body.original_url === 'string' ? body.original_url.trim() : '';
-      if (!title) return jsonResponse({ error: 'يرجى كتابة عنوان الإنتاج.' }, 400);
-      if (!originalUrl || !isSafeUrl(originalUrl)) {
-        return jsonResponse({ error: 'رابط المحتوى غير صالح.' }, 400);
-      }
-      const preferredMethod = VALID_SOURCE_METHODS.includes(body.source_method as SourceMethod)
-        ? (body.source_method as SourceMethod)
-        : 'direct';
-      const preferredType = VALID_CONTENT_TYPES.includes(body.content_type as ContentType)
-        ? (body.content_type as ContentType)
-        : 'video';
-      const parsed = parseMediaUrlClient(originalUrl, preferredMethod, preferredType);
-      if (!parsed.valid) return jsonResponse({ error: parsed.error || 'رابط غير صالح.' }, 400);
-
-      const categoryId = Number(body.category_id);
-      if (!Number.isInteger(categoryId) || categoryId <= 0) {
-        return jsonResponse({ error: 'يرجى اختيار التصنيف الرئيسي.' }, 400);
-      }
-
-      const galleryUrls = Array.isArray(body.gallery_urls)
-        ? body.gallery_urls
-            .filter((u): u is string => typeof u === 'string' && isSafeUrl(u))
-            .map((u) => normalizeImageUrl(u))
-        : [];
-      const extraMedia = sanitizeExtraMediaEdge(body.extra_media);
-      const validSubId = body.subcategory_id ? Number(body.subcategory_id) : null;
-      const extraCategoryIds = sanitizeExtraCategoryIdsEdge(body.extra_category_ids, categoryId, validSubId);
-      const rawOrder = Number(body.sort_order);
-      let effectiveOrder =
-        body.sort_order !== undefined &&
-        body.sort_order !== null &&
-        body.sort_order !== '' &&
-        Number.isFinite(rawOrder) &&
-        rawOrder > 0
-          ? Math.floor(rawOrder)
-          : 0;
+      const parsed = sanitizeWorkPayloadEdge(body);
+      if ('error' in parsed) return jsonResponse({ error: parsed.error }, 400);
+      const d = parsed.data;
+      let effectiveOrder = d.sort_order;
       if (effectiveOrder <= 0) {
         const maxRow = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM work_items').first<{ m: number }>();
         effectiveOrder = Number(maxRow?.m || 0) + 1;
@@ -1764,30 +2257,28 @@ export async function onRequest(context: EventContext): Promise<Response> {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `)
         .bind(
-          title,
-          typeof body.description === 'string' ? body.description.trim() : '',
-          typeof body.student_name === 'string' ? body.student_name.trim() : '',
-          typeof body.grade_level === 'string' ? body.grade_level.trim() : '',
-          typeof body.class_section === 'string' ? body.class_section.trim() : '',
-          typeof body.publish_date === 'string' ? body.publish_date.trim() : new Date().toISOString().slice(0, 10),
-          preferredType,
-          preferredMethod,
-          originalUrl,
-          typeof body.embed_url === 'string' && isSafeUrl(body.embed_url) ? body.embed_url.trim() : parsed.embedUrl,
-          typeof body.media_mime === 'string' ? body.media_mime : parsed.mediaMime,
-          typeof body.thumbnail_url === 'string' && isSafeUrl(body.thumbnail_url)
-            ? normalizeImageUrl(body.thumbnail_url)
-            : parsed.thumbnailUrl,
-          JSON.stringify(galleryUrls),
-          JSON.stringify(extraMedia),
-          categoryId,
-          validSubId,
-          JSON.stringify(extraCategoryIds),
-          typeof body.keywords === 'string' ? body.keywords.trim() : '',
-          VALID_STATUSES.includes(body.status as PublishStatus) ? body.status : 'draft',
-          body.featured ? 1 : 0,
-          body.embed_status === 'warning' || body.embed_status === 'blocked' ? body.embed_status : 'ok',
-          typeof body.embed_note === 'string' ? body.embed_note.trim() : '',
+          d.title,
+          d.description,
+          d.student_name,
+          d.grade_level,
+          d.class_section,
+          d.publish_date,
+          d.content_type,
+          d.source_method,
+          d.original_url,
+          d.embed_url,
+          d.media_mime,
+          d.thumbnail_url,
+          d.gallery_urls,
+          d.extra_media,
+          d.category_id,
+          d.subcategory_id,
+          d.extra_category_ids,
+          d.keywords,
+          d.status,
+          d.featured,
+          d.embed_status,
+          d.embed_note,
           effectiveOrder
         )
         .run();
@@ -1796,12 +2287,18 @@ export async function onRequest(context: EventContext): Promise<Response> {
     }
 
     if (method === 'DELETE' && path === '/api/admin/works/samples') {
+      if (!hasPermissionD1(auth, 'delete_works')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية مسح المحتويات.' }, 403);
+      }
       const res = await db.prepare('DELETE FROM work_items WHERE is_sample = 1').run();
       return jsonResponse({ deleted: Number(res.meta?.changes || 0) });
     }
 
     const adminWorkStatusMatch = path.match(/^\/api\/admin\/works\/(\d+)\/status$/);
     if (method === 'PATCH' && adminWorkStatusMatch) {
+      if (!hasPermissionD1(auth, 'manage_works')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية تعديل حالة المحتويات.' }, 403);
+      }
       const id = Number(adminWorkStatusMatch[1]);
       const body = (await request.json().catch(() => ({}))) as { status?: PublishStatus };
       if (!VALID_STATUSES.includes(body.status as PublishStatus)) {
@@ -1819,42 +2316,21 @@ export async function onRequest(context: EventContext): Promise<Response> {
     if (adminWorkIdMatch) {
       const id = Number(adminWorkIdMatch[1]);
       if (method === 'GET') {
+        if (!hasPermissionD1(auth, 'manage_works')) {
+          return jsonResponse({ error: 'ليس لديك صلاحية عرض تفاصيل التعديل.' }, 403);
+        }
         const items = await queryWorksD1(db, 'WHERE w.id = ?', [id], 'w.id DESC', 1);
         if (!items.length) return jsonResponse({ error: 'المحتوى غير موجود.' }, 404);
         return jsonResponse({ item: items[0] });
       }
       if (method === 'PUT') {
-        const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-        const title = typeof body.title === 'string' ? body.title.trim() : '';
-        const originalUrl = typeof body.original_url === 'string' ? body.original_url.trim() : '';
-        if (!title || !originalUrl || !isSafeUrl(originalUrl)) {
-          return jsonResponse({ error: 'العنوان والرابط الصالح مطلوبان.' }, 400);
+        if (!hasPermissionD1(auth, 'manage_works')) {
+          return jsonResponse({ error: 'ليس لديك صلاحية تعديل المحتويات.' }, 403);
         }
-        const preferredMethod = VALID_SOURCE_METHODS.includes(body.source_method as SourceMethod)
-          ? (body.source_method as SourceMethod)
-          : 'direct';
-        const preferredType = VALID_CONTENT_TYPES.includes(body.content_type as ContentType)
-          ? (body.content_type as ContentType)
-          : 'video';
-        const parsed = parseMediaUrlClient(originalUrl, preferredMethod, preferredType);
-        const galleryUrls = Array.isArray(body.gallery_urls)
-          ? body.gallery_urls
-              .filter((u): u is string => typeof u === 'string' && isSafeUrl(u))
-              .map((u) => normalizeImageUrl(u))
-          : [];
-        const extraMedia = sanitizeExtraMediaEdge(body.extra_media);
-        const primaryCatId = Number(body.category_id);
-        const validSubId = body.subcategory_id ? Number(body.subcategory_id) : null;
-        const extraCategoryIds = sanitizeExtraCategoryIdsEdge(body.extra_category_ids, primaryCatId, validSubId);
-        const rawOrder = Number(body.sort_order);
-        const sortOrder =
-          body.sort_order !== undefined &&
-          body.sort_order !== null &&
-          body.sort_order !== '' &&
-          Number.isFinite(rawOrder) &&
-          rawOrder >= 0
-            ? Math.floor(rawOrder)
-            : 0;
+        const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+        const parsed = sanitizeWorkPayloadEdge(body);
+        if ('error' in parsed) return jsonResponse({ error: parsed.error }, 400);
+        const d = parsed.data;
         await db
           .prepare(`
             UPDATE work_items SET
@@ -1866,31 +2342,29 @@ export async function onRequest(context: EventContext): Promise<Response> {
             WHERE id = ?
           `)
           .bind(
-            title,
-            typeof body.description === 'string' ? body.description.trim() : '',
-            typeof body.student_name === 'string' ? body.student_name.trim() : '',
-            typeof body.grade_level === 'string' ? body.grade_level.trim() : '',
-            typeof body.class_section === 'string' ? body.class_section.trim() : '',
-            typeof body.publish_date === 'string' ? body.publish_date.trim() : new Date().toISOString().slice(0, 10),
-            preferredType,
-            preferredMethod,
-            originalUrl,
-            typeof body.embed_url === 'string' && isSafeUrl(body.embed_url) ? body.embed_url.trim() : parsed.embedUrl,
-            typeof body.media_mime === 'string' ? body.media_mime : parsed.mediaMime,
-            typeof body.thumbnail_url === 'string' && isSafeUrl(body.thumbnail_url)
-              ? normalizeImageUrl(body.thumbnail_url)
-              : parsed.thumbnailUrl,
-            JSON.stringify(galleryUrls),
-            JSON.stringify(extraMedia),
-            primaryCatId,
-            validSubId,
-            JSON.stringify(extraCategoryIds),
-            typeof body.keywords === 'string' ? body.keywords.trim() : '',
-            VALID_STATUSES.includes(body.status as PublishStatus) ? body.status : 'draft',
-            body.featured ? 1 : 0,
-            body.embed_status === 'warning' || body.embed_status === 'blocked' ? body.embed_status : 'ok',
-            typeof body.embed_note === 'string' ? body.embed_note.trim() : '',
-            sortOrder,
+            d.title,
+            d.description,
+            d.student_name,
+            d.grade_level,
+            d.class_section,
+            d.publish_date,
+            d.content_type,
+            d.source_method,
+            d.original_url,
+            d.embed_url,
+            d.media_mime,
+            d.thumbnail_url,
+            d.gallery_urls,
+            d.extra_media,
+            d.category_id,
+            d.subcategory_id,
+            d.extra_category_ids,
+            d.keywords,
+            d.status,
+            d.featured,
+            d.embed_status,
+            d.embed_note,
+            d.sort_order,
             id
           )
           .run();
@@ -1898,6 +2372,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
         return jsonResponse({ item: updated });
       }
       if (method === 'DELETE') {
+        if (!hasPermissionD1(auth, 'delete_works')) {
+          return jsonResponse({ error: 'ليس لديك صلاحية مسح المحتويات.' }, 403);
+        }
         await db.prepare('DELETE FROM work_items WHERE id = ?').bind(id).run();
         return jsonResponse({ ok: true });
       }
@@ -1908,6 +2385,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
         return jsonResponse({ categories: await getCategoriesD1(db, false) });
       }
       if (method === 'POST') {
+        if (!hasPermissionD1(auth, 'manage_categories')) {
+          return jsonResponse({ error: 'ليس لديك صلاحية إدارة التصنيفات.' }, 403);
+        }
         const body = (await request.json().catch(() => ({}))) as {
           name?: string;
           description?: string;
@@ -1927,6 +2407,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
 
     const catIdMatch = path.match(/^\/api\/admin\/categories\/(\d+)$/);
     if (catIdMatch) {
+      if (!hasPermissionD1(auth, 'manage_categories')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية إدارة التصنيفات.' }, 403);
+      }
       const id = Number(catIdMatch[1]);
       if (method === 'PUT') {
         const body = (await request.json().catch(() => ({}))) as { name?: string; description?: string };
@@ -1974,6 +2457,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
     }
 
     if (path === '/api/admin/settings') {
+      if (!hasPermissionD1(auth, 'manage_settings')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية إدارة إعدادات المنصة.' }, 403);
+      }
       if (method === 'GET') {
         return jsonResponse({ settings: await getSettingsD1(db) });
       }
@@ -1989,6 +2475,12 @@ export async function onRequest(context: EventContext): Promise<Response> {
                 return jsonResponse({ error: `الرابط المدخل للحقل ${k} غير صالح.` }, 400);
               }
               trimmed = normalizeImageUrl(trimmed);
+            }
+            if (k.startsWith('bg_') && trimmed) {
+              if (!isSafeBackgroundValue(trimmed)) {
+                return jsonResponse({ error: `قيمة الخلفية للحقل ${k} غير صالحة.` }, 400);
+              }
+              trimmed = normalizeBackgroundValue(trimmed);
             }
             if (k === 'primary_color' && trimmed && !/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
               return jsonResponse({ error: 'صيغة اللون الأساسي غير صالحة.' }, 400);

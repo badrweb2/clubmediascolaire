@@ -89,17 +89,77 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   supervisor_bio:
     'يتولى الإشراف التربوي والتقني على المنصة، ومواكبة التلاميذ في إعداد ومراجعة الإنتاجات الإعلامية والعلمية والفنية قبل نشرها في المعرض الرقمي.',
   about_faq_json: JSON.stringify(DEFAULT_FAQ_ITEMS),
+  active_theme_id: 'classic-academic',
+  bg_site: '#F8FAFC',
+  bg_home: '',
+  bg_pages: '',
+  bg_cards: '#FFFFFF',
+  bg_work_detail: '',
+  font_family: 'ibm',
+  card_radius: 'rounded',
+  enable_ui_sounds: '1',
+  hero_zoom_enabled: '1',
+  announcement_enabled: '0',
+  announcement_text: '',
+  default_catalog_sort: 'custom',
+  hidden_nav_keys_json: '[]',
+  custom_nav_items_json: '[]',
 };
 
+export const ALL_ADMIN_PERMISSIONS = [
+  'manage_works',
+  'delete_works',
+  'manage_categories',
+  'manage_settings',
+  'manage_users',
+] as const;
+
+export const ADMIN_PERMISSION_LABELS: Record<(typeof ALL_ADMIN_PERMISSIONS)[number], string> = {
+  manage_works: 'إضافة وتعديل ونشر المحتويات والاستيراد الجماعي',
+  delete_works: 'حذف المحتويات والمشاريع',
+  manage_categories: 'إدارة التصنيفات الرئيسية والفرعية',
+  manage_settings: 'تعديل إعدادات المنصة والهوية والقوائم',
+  manage_users: 'إدارة حسابات المستخدمين وتحديد مهامهم',
+};
+
+export const BUILTIN_NAV_ITEMS: Array<{
+  key: keyof PlatformSettings;
+  defaultLabel: string;
+  path: string;
+}> = [
+  { key: 'nav_home_label', defaultLabel: 'الرئيسية', path: '/' },
+  { key: 'nav_videos_label', defaultLabel: 'الفيديوهات', path: '/videos' },
+  { key: 'nav_audio_label', defaultLabel: 'الإذاعة المدرسية', path: '/audio' },
+  { key: 'nav_innovations_label', defaultLabel: 'ابتكارات', path: '/innovations' },
+  { key: 'nav_projects_label', defaultLabel: 'مشاريع', path: '/projects' },
+  { key: 'nav_activities_label', defaultLabel: 'أنشطة', path: '/activities' },
+  { key: 'nav_works_label', defaultLabel: 'إنتاجات', path: '/creations' },
+  { key: 'nav_presentations_label', defaultLabel: 'عروض', path: '/presentations' },
+  { key: 'nav_competitions_label', defaultLabel: 'مسابقات', path: '/competitions' },
+  { key: 'nav_designs_label', defaultLabel: 'إبداعات', path: '/designs' },
+];
+
 export const SETTING_KEYS = Object.keys(DEFAULT_PLATFORM_SETTINGS) as Array<keyof PlatformSettings>;
+
+const EXPLICIT_EMPTY_ALLOWED_PREFIXES = [
+  'show_',
+  'enable_',
+  'bg_',
+  'announcement_',
+  'hero_zoom_',
+  'hidden_nav_',
+  'custom_nav_',
+];
 
 export function mergePlatformSettings(rawMap: Record<string, string | undefined>): PlatformSettings {
   const out: Record<string, string> = {};
   for (const key of SETTING_KEYS) {
     const val = rawMap[key];
     out[key] = typeof val === 'string' && val !== '' ? val : DEFAULT_PLATFORM_SETTINGS[key];
-    // Preserve explicit empty string for toggle/optional text fields if stored intentionally
-    if (typeof val === 'string' && key.startsWith('show_')) {
+    if (
+      typeof val === 'string' &&
+      EXPLICIT_EMPTY_ALLOWED_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
       out[key] = val;
     }
   }
@@ -120,6 +180,49 @@ export function parseFaqJson(raw: string): FaqItem[] {
     return valid.length > 0 ? valid : DEFAULT_FAQ_ITEMS;
   } catch {
     return DEFAULT_FAQ_ITEMS;
+  }
+}
+
+export function parseCustomNavItems(raw: string): Array<{
+  id: string;
+  label: string;
+  target_type: 'category' | 'route' | 'url';
+  target_value: string;
+  enabled: boolean;
+}> {
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item) =>
+          Boolean(item) &&
+          typeof item === 'object' &&
+          typeof item.label === 'string' &&
+          item.label.trim().length > 0 &&
+          typeof item.target_value === 'string' &&
+          item.target_value.trim().length > 0
+      )
+      .map((item, idx) => ({
+        id: typeof item.id === 'string' && item.id ? item.id : `nav-${idx + 1}`,
+        label: String(item.label).trim(),
+        target_type:
+          item.target_type === 'category' || item.target_type === 'url' ? item.target_type : 'route',
+        target_value: String(item.target_value).trim(),
+        enabled: item.enabled !== false,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+export function parseHiddenNavKeys(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((k): k is string => typeof k === 'string' && k.trim().length > 0);
+  } catch {
+    return [];
   }
 }
 

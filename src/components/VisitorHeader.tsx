@@ -1,30 +1,85 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Menu, Search, X } from 'lucide-react';
 import { useApp } from '../context/AppContext.tsx';
 import { isSafeUrl, normalizeImageUrl } from '../lib/mediaUtils.ts';
+import {
+  BUILTIN_NAV_ITEMS,
+  parseCustomNavItems,
+  parseHiddenNavKeys,
+} from '../lib/settingsDefaults.ts';
+
+interface ResolvedNavLink {
+  key: string;
+  label: string;
+  path: string;
+  external: boolean;
+}
 
 export function VisitorHeader() {
-  const { pathname, navigate, settings } = useApp();
+  const { pathname, searchParams, navigate, settings } = useApp();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const navLinks = [
-    { label: settings.nav_home_label || 'الرئيسية', path: '/' },
-    { label: settings.nav_videos_label || 'الفيديوهات', path: '/videos' },
-    { label: settings.nav_audio_label || 'الإذاعة المدرسية', path: '/audio' },
-    { label: settings.nav_innovations_label || 'ابتكارات', path: '/innovations' },
-    { label: settings.nav_projects_label || 'مشاريع', path: '/projects' },
-    { label: settings.nav_activities_label || 'أنشطة', path: '/activities' },
-    { label: settings.nav_works_label || 'إنتاجات', path: '/creations' },
-    { label: settings.nav_presentations_label || 'عروض', path: '/presentations' },
-    { label: settings.nav_competitions_label || 'مسابقات', path: '/competitions' },
-    { label: settings.nav_designs_label || 'إبداعات', path: '/designs' },
-  ];
+  const navLinks = useMemo<ResolvedNavLink[]>(() => {
+    const hiddenSet = new Set(parseHiddenNavKeys(settings.hidden_nav_keys_json));
+    const builtIn: ResolvedNavLink[] = BUILTIN_NAV_ITEMS.filter(
+      (item) => !hiddenSet.has(item.key)
+    ).map((item) => ({
+      key: item.key,
+      label: (settings[item.key] || '').trim() || item.defaultLabel,
+      path: item.path,
+      external: false,
+    }));
 
-  const handleNav = (path: string) => {
-    navigate(path);
+    const customRaw = parseCustomNavItems(settings.custom_nav_items_json);
+    const customResolved: ResolvedNavLink[] = [];
+    for (const item of customRaw) {
+      if (!item.enabled) continue;
+      if (item.target_type === 'category') {
+        const catId = Number(item.target_value);
+        if (Number.isInteger(catId) && catId > 0) {
+          customResolved.push({
+            key: item.id,
+            label: item.label,
+            path: `/works?categoryId=${catId}`,
+            external: false,
+          });
+        }
+      } else if (item.target_type === 'url') {
+        if (isSafeUrl(item.target_value)) {
+          const isInternal = item.target_value.startsWith('/');
+          customResolved.push({
+            key: item.id,
+            label: item.label,
+            path: item.target_value,
+            external: !isInternal,
+          });
+        }
+      } else {
+        const routePath = item.target_value.startsWith('/')
+          ? item.target_value
+          : `/${item.target_value}`;
+        customResolved.push({
+          key: item.id,
+          label: item.label,
+          path: routePath,
+          external: false,
+        });
+      }
+    }
+
+    return [...builtIn, ...customResolved];
+  }, [settings]);
+
+  const handleNav = (path: string, external = false) => {
     setMobileOpen(false);
+    if (external) {
+      window.open(path, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    navigate(path);
   };
 
+  const currentFull = searchParams.toString() ? `${pathname}?${searchParams.toString()}` : pathname;
   const accentColor = settings.primary_color || '#1E40AF';
 
   return (
@@ -83,14 +138,18 @@ export function VisitorHeader() {
       >
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-center gap-2 xl:gap-2.5">
           {navLinks.map((link) => {
-            const active = pathname === link.path;
+            const active = !link.external && (link.path.includes('?') ? currentFull === link.path : pathname === link.path);
             return (
               <a
-                key={link.path}
+                key={link.key}
                 href={link.path}
+                target={link.external ? '_blank' : undefined}
+                rel={link.external ? 'noopener noreferrer' : undefined}
                 onClick={(e) => {
-                  e.preventDefault();
-                  handleNav(link.path);
+                  if (!link.external) {
+                    e.preventDefault();
+                    handleNav(link.path, false);
+                  }
                 }}
                 style={active ? { backgroundColor: accentColor, borderColor: accentColor } : undefined}
                 className={`group relative px-4 py-2.5 rounded-xl text-[15px] font-semibold border whitespace-nowrap shrink-0 transition-all duration-200 ease-out transform select-none ${
@@ -110,14 +169,20 @@ export function VisitorHeader() {
       {mobileOpen && (
         <div className="lg:hidden bg-white border-t border-slate-200 px-4 py-4 grid grid-cols-2 gap-2">
           {navLinks.map((link) => {
-            const active = pathname === link.path;
+            const active = !link.external && (link.path.includes('?') ? currentFull === link.path : pathname === link.path);
             return (
               <a
-                key={link.path}
+                key={link.key}
                 href={link.path}
+                target={link.external ? '_blank' : undefined}
+                rel={link.external ? 'noopener noreferrer' : undefined}
                 onClick={(e) => {
-                  e.preventDefault();
-                  handleNav(link.path);
+                  if (!link.external) {
+                    e.preventDefault();
+                    handleNav(link.path, false);
+                  } else {
+                    setMobileOpen(false);
+                  }
                 }}
                 style={active ? { backgroundColor: accentColor } : undefined}
                 className={`block px-4 py-3 rounded-xl text-sm font-semibold text-center border transition-all duration-150 active:scale-95 ${

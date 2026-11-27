@@ -8,6 +8,7 @@ import {
   normalizeImageUrl,
 } from '../lib/mediaUtils.ts';
 import { isSettingEnabled } from '../lib/settingsDefaults.ts';
+import { resolveBackgroundStyle, resolveCardRadiusClass } from '../lib/themePresets.ts';
 import { useApp } from '../context/AppContext.tsx';
 
 function getTypeIcon(type: ContentType) {
@@ -39,6 +40,8 @@ export function WorkCard({ item }: { item: WorkItem }) {
 
   const hasThumb = Boolean(resolvedThumb && isSafeUrl(resolvedThumb) && !imgFailed);
   const showViews = isSettingEnabled(settings.show_view_counts);
+  const cardBgStyle = resolveBackgroundStyle(settings.bg_cards, { isCard: true });
+  const radiusClass = resolveCardRadiusClass(settings.card_radius);
 
   return (
     <article
@@ -51,7 +54,8 @@ export function WorkCard({ item }: { item: WorkItem }) {
       }}
       tabIndex={0}
       role="button"
-      className="group bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:border-[#1E40AF]/40 hover:shadow-md active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E40AF]"
+      style={cardBgStyle}
+      className={`group bg-white border border-slate-200 ${radiusClass} overflow-hidden flex flex-col cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:border-[#1E40AF]/40 hover:shadow-md active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1E40AF]`}
     >
       <div className="relative aspect-[16/10] bg-slate-50 overflow-hidden flex items-center justify-center p-1.5 border-b border-slate-100">
         {hasThumb ? (

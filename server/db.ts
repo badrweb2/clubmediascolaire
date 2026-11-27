@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
-import type { Category, ContentType, PlatformSettings, PublishStatus, SourceMethod, WorkItem } from '../src/types.ts';
+import type { Category, ContentType, ExtraMediaItem, PlatformSettings, PublicSiteStats, PublishStatus, SourceMethod, WorkItem } from '../src/types.ts';
+import { ALL_ADMIN_PERMISSIONS, DEFAULT_PLATFORM_SETTINGS, mergePlatformSettings } from '../src/lib/settingsDefaults.ts';
 
 const dbPath = path.resolve(process.cwd(), 'school_platform.db');
 export const db = new DatabaseSync(dbPath);
@@ -14,6 +15,10 @@ export function initDatabase(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '',
+      permissions_json TEXT NOT NULL DEFAULT '[]',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      is_primary INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -55,43 +60,120 @@ export function initDatabase(): void {
       media_mime TEXT NOT NULL DEFAULT '',
       thumbnail_url TEXT NOT NULL DEFAULT '',
       gallery_urls TEXT NOT NULL DEFAULT '[]',
+      extra_media TEXT NOT NULL DEFAULT '[]',
       category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
       subcategory_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+      extra_category_ids TEXT NOT NULL DEFAULT '[]',
       keywords TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'published',
       featured INTEGER NOT NULL DEFAULT 0,
       embed_status TEXT NOT NULL DEFAULT 'ok',
       embed_note TEXT NOT NULL DEFAULT '',
       views_count INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       is_sample INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS platform_visits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      visit_date TEXT NOT NULL DEFAULT (date('now')),
+      path TEXT NOT NULL DEFAULT '/',
+      visitor_hash TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
+  ensureAdminUserColumns();
+  ensureWorkSortOrderColumn();
   seedPlatformSettings();
   seedCategories();
+  ensureExtraCategoriesOnce();
   seedSampleWorks();
+  migrateRealStatsOnce();
+}
+
+function ensureAdminUserColumns(): void {
+  const cols = db.prepare(`PRAGMA table_info(admin_users)`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'display_name')) {
+    db.exec(`ALTER TABLE admin_users ADD COLUMN display_name TEXT NOT NULL DEFAULT '';`);
+  }
+  if (!cols.some((c) => c.name === 'permissions_json')) {
+    db.exec(`ALTER TABLE admin_users ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '[]';`);
+  }
+  if (!cols.some((c) => c.name === 'is_active')) {
+    db.exec(`ALTER TABLE admin_users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;`);
+  }
+  if (!cols.some((c) => c.name === 'is_primary')) {
+    db.exec(`ALTER TABLE admin_users ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0;`);
+  }
+
+  const flag = db
+    .prepare(`SELECT value FROM platform_settings WHERE key = '_internal_admin_rbac_migrated'`)
+    .get() as { value: string } | undefined;
+  if (flag?.value === '1') return;
+
+  const firstAdmin = db
+    .prepare('SELECT id FROM admin_users ORDER BY id ASC LIMIT 1')
+    .get() as { id: number } | undefined;
+  if (firstAdmin) {
+    db.prepare(
+      `UPDATE admin_users SET is_primary = 1, is_active = 1, permissions_json = ? WHERE id = ?`
+    ).run(JSON.stringify([...ALL_ADMIN_PERMISSIONS]), firstAdmin.id);
+  }
+  db.prepare(
+    `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('_internal_admin_rbac_migrated', '1')`
+  ).run();
+}
+
+function ensureWorkSortOrderColumn(): void {
+  const cols = db.prepare(`PRAGMA table_info(work_items)`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'sort_order')) {
+    db.exec(`ALTER TABLE work_items ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;`);
+  }
+  if (!cols.some((c) => c.name === 'extra_media')) {
+    db.exec(`ALTER TABLE work_items ADD COLUMN extra_media TEXT NOT NULL DEFAULT '[]';`);
+  }
+  if (!cols.some((c) => c.name === 'extra_category_ids')) {
+    db.exec(`ALTER TABLE work_items ADD COLUMN extra_category_ids TEXT NOT NULL DEFAULT '[]';`);
+  }
+  const flag = db
+    .prepare(`SELECT value FROM platform_settings WHERE key = '_internal_work_sort_order_migrated'`)
+    .get() as { value: string } | undefined;
+  if (flag?.value === '1') return;
+
+  const existing = db
+    .prepare('SELECT id FROM work_items ORDER BY publish_date DESC, id DESC')
+    .all() as Array<{ id: number }>;
+  const upd = db.prepare('UPDATE work_items SET sort_order = ? WHERE id = ?');
+  existing.forEach((row, idx) => {
+    upd.run(idx + 1, row.id);
+  });
+  db.prepare(
+    `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('_internal_work_sort_order_migrated', '1')`
+  ).run();
 }
 
 function seedPlatformSettings(): void {
-  const defaults: Record<string, string> = {
-    school_name: 'مدرسة الحسن الداخل',
-    platform_title: 'المنصة التعليمية لمدرسة الحسن الداخل',
-    platform_tagline:
-      'معرض رقمي ومكتبة مدرسية تفاعلية لعرض وحفظ وتوثيق إنتاجات وإبداعات التلاميذ في العلوم والفنون والإذاعة والمشاريع التربوية.',
-    hero_cover_url: '/src/assets/images/hero_school_cover_1795563098821.jpg',
-    logo_url: '/assets/aistudio/LOGO_e619da1e.png',
-    academic_year: '2026 / 2027',
-    footer_note: 'جميع الحقوق محفوظة لمدرسة الحسن الداخل — معرض الإبداع الطلابي الرقمي',
-  };
-
   const insertSetting = db.prepare(
     'INSERT OR IGNORE INTO platform_settings (key, value) VALUES (?, ?)'
   );
-  for (const [key, value] of Object.entries(defaults)) {
+  for (const [key, value] of Object.entries(DEFAULT_PLATFORM_SETTINGS)) {
     insertSetting.run(key, value);
   }
+}
+
+function migrateRealStatsOnce(): void {
+  const flag = db
+    .prepare(`SELECT value FROM platform_settings WHERE key = '_internal_real_stats_migrated'`)
+    .get() as { value: string } | undefined;
+  if (flag?.value === '1') return;
+
+  db.prepare('UPDATE work_items SET views_count = 0 WHERE is_sample = 1').run();
+  db.prepare(
+    `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('_internal_real_stats_migrated', '1')`
+  ).run();
 }
 
 function seedCategories(): void {
@@ -184,6 +266,62 @@ function seedCategories(): void {
   });
 }
 
+function ensureExtraCategoriesOnce(): void {
+  const flag = db
+    .prepare(`SELECT value FROM platform_settings WHERE key = '_internal_extra_cats_v2_seeded'`)
+    .get() as { value: string } | undefined;
+  if (flag?.value === '1') return;
+
+  const insertCat = db.prepare(
+    'INSERT OR IGNORE INTO categories (name, slug, parent_id, description, sort_order) VALUES (?, ?, ?, ?, ?)'
+  );
+  const existsByNameOrSlug = (name: string, slug: string) =>
+    Boolean(db.prepare('SELECT id FROM categories WHERE slug = ? OR name = ?').get(slug, name));
+
+  const maxOrder = (
+    db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS m FROM categories').get() as { m: number }
+  ).m;
+
+  if (!existsByNameOrSlug('تصاميم وإبداعات', 'designs-creations')) {
+    insertCat.run(
+      'تصاميم وإبداعات',
+      'designs-creations',
+      null,
+      'تصاميم رقمية، ملصقات إبداعية، وأعمال فنية مختارة للتلاميذ.',
+      maxOrder + 1
+    );
+  }
+
+  const projectsParent = db
+    .prepare(`SELECT id FROM categories WHERE slug = 'projects' OR name = 'المشاريع والابتكارات' LIMIT 1`)
+    .get() as { id: number } | undefined;
+
+  if (projectsParent) {
+    if (!existsByNameOrSlug('ابتكارات النادي العلمي والتكنولوجي', 'projects-science-club')) {
+      insertCat.run(
+        'ابتكارات النادي العلمي والتكنولوجي',
+        'projects-science-club',
+        projectsParent.id,
+        'ابتكارات وتجارب النادي العلمي والتكنولوجي.',
+        10
+      );
+    }
+    if (!existsByNameOrSlug('مشاريع رقمية', 'projects-digital')) {
+      insertCat.run(
+        'مشاريع رقمية',
+        'projects-digital',
+        projectsParent.id,
+        'برمجة ومشاريع رقمية وتطبيقات تلاميذ المؤسسة.',
+        11
+      );
+    }
+  }
+
+  db.prepare(
+    `INSERT OR REPLACE INTO platform_settings (key, value) VALUES ('_internal_extra_cats_v2_seeded', '1')`
+  ).run();
+}
+
 function seedSampleWorks(): void {
   const existing = db.prepare('SELECT COUNT(*) as count FROM work_items').get() as { count: number };
   if (existing.count > 0) return;
@@ -198,8 +336,8 @@ function seedSampleWorks(): void {
       title, description, student_name, grade_level, class_section, publish_date,
       content_type, source_method, original_url, embed_url, media_mime,
       thumbnail_url, gallery_urls, category_id, subcategory_id, keywords,
-      status, featured, embed_status, embed_note, views_count, is_sample
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      status, featured, embed_status, embed_note, views_count, sort_order, is_sample
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
   `);
 
   const samples: Array<{
@@ -246,7 +384,7 @@ function seedSampleWorks(): void {
       keywords: 'طاقة شمسية, ري ذكي, علوم, بيئة, ابتكار',
       status: 'published',
       featured: 1,
-      views_count: 342,
+      views_count: 0,
     },
     {
       title: 'الروبوت المستكشف وتفادي العقبات بالموجات فوق الصوتية',
@@ -268,7 +406,7 @@ function seedSampleWorks(): void {
       keywords: 'روبوتيك, برمجة, فيديو تعليمي, نادي العلوم',
       status: 'published',
       featured: 1,
-      views_count: 289,
+      views_count: 0,
     },
     {
       title: 'الإذاعة المدرسية الصباحية — حلقة حول قيمة المطالعة والعمل الجماعي',
@@ -290,7 +428,7 @@ function seedSampleWorks(): void {
       keywords: 'إذاعة مدرسية, صوتيات, مطالعة, تواصل',
       status: 'published',
       featured: 0,
-      views_count: 215,
+      views_count: 0,
     },
     {
       title: 'معرض اللوحات المائية والزخرفة الهندسية المغربية',
@@ -315,7 +453,7 @@ function seedSampleWorks(): void {
       keywords: 'رسم, ألوان مائية, زخرفة, فنون تشكيلية',
       status: 'published',
       featured: 1,
-      views_count: 264,
+      views_count: 0,
     },
     {
       title: 'المجلة المدرسية الرقمية — العدد الرابع: نحو مدرسة خضراء مبدعة',
@@ -337,7 +475,7 @@ function seedSampleWorks(): void {
       keywords: 'مجلة مدرسية, PDF, صحافة, مقالات',
       status: 'published',
       featured: 0,
-      views_count: 198,
+      views_count: 0,
     },
     {
       title: 'عرض تقديمي: الهندسة والزخرفة في التراث المغربي الأصيل',
@@ -359,7 +497,7 @@ function seedSampleWorks(): void {
       keywords: 'عرض تقديمي, تراث, هندسة, بحث مدرسي',
       status: 'published',
       featured: 0,
-      views_count: 152,
+      views_count: 0,
     },
     {
       title: 'بودكاست «صفحة من كتاب»: مراجعة صوتية لقصص الناشئة',
@@ -381,7 +519,7 @@ function seedSampleWorks(): void {
       keywords: 'بودكاست, قراءة, كتاب, صوتي',
       status: 'published',
       featured: 0,
-      views_count: 134,
+      views_count: 0,
     },
     {
       title: 'ملف تحضيري: تغطية اليوم الوطني للتعاون المدرسي (مسودة)',
@@ -407,7 +545,7 @@ function seedSampleWorks(): void {
     },
   ];
 
-  for (const s of samples) {
+  samples.forEach((s, idx) => {
     const catId = catBySlug(s.catSlug);
     const subId = s.subSlug ? catBySlug(s.subSlug) : null;
     insertWork.run(
@@ -431,26 +569,44 @@ function seedSampleWorks(): void {
       s.featured,
       'ok',
       '',
-      s.views_count
+      s.views_count,
+      idx + 1
     );
-  }
+  });
 }
 
 export function getSettings(): PlatformSettings {
-  const rows = db.prepare('SELECT key, value FROM platform_settings').all() as Array<{
+  const rows = db
+    .prepare(`SELECT key, value FROM platform_settings WHERE key NOT LIKE '_internal_%'`)
+    .all() as Array<{
     key: string;
     value: string;
   }>;
   const map: Record<string, string> = {};
   for (const r of rows) map[r.key] = r.value;
+  return mergePlatformSettings(map);
+}
+
+export function getPublicSiteStats(): PublicSiteStats {
+  const visitRow = db
+    .prepare(`
+      SELECT
+        COUNT(*) AS total_site_visits,
+        SUM(CASE WHEN visit_date = date('now') THEN 1 ELSE 0 END) AS today_site_visits,
+        COUNT(DISTINCT NULLIF(visitor_hash, '')) AS unique_visitors
+      FROM platform_visits
+    `)
+    .get() as Record<string, number> | undefined;
+
+  const viewsRow = db
+    .prepare(`SELECT COALESCE(SUM(views_count), 0) AS total_work_views FROM work_items WHERE status = 'published'`)
+    .get() as Record<string, number> | undefined;
+
   return {
-    school_name: map.school_name || 'مدرسة الحسن الداخل',
-    platform_title: map.platform_title || 'المنصة التعليمية لمدرسة الحسن الداخل',
-    platform_tagline: map.platform_tagline || '',
-    hero_cover_url: map.hero_cover_url || '/src/assets/images/hero_school_cover_1795563098821.jpg',
-    logo_url: map.logo_url || '/assets/aistudio/LOGO_e619da1e.png',
-    academic_year: map.academic_year || '2026 / 2027',
-    footer_note: map.footer_note || '',
+    total_site_visits: Number(visitRow?.total_site_visits || 0),
+    today_site_visits: Number(visitRow?.today_site_visits || 0),
+    unique_visitors: Number(visitRow?.unique_visitors || 0),
+    total_work_views: Number(viewsRow?.total_work_views || 0),
   };
 }
 
@@ -463,6 +619,33 @@ export function mapWorkRow(row: Record<string, unknown>): WorkItem {
     }
   } catch {
     gallery = [];
+  }
+  let extraMedia: ExtraMediaItem[] = [];
+  try {
+    const parsedExtra = JSON.parse(String(row.extra_media || '[]'));
+    if (Array.isArray(parsedExtra)) {
+      extraMedia = parsedExtra.filter(
+        (m): m is ExtraMediaItem =>
+          Boolean(m && typeof m === 'object' && typeof m.original_url === 'string' && typeof m.embed_url === 'string')
+      );
+    }
+  } catch {
+    extraMedia = [];
+  }
+  let extraCategoryIds: number[] = [];
+  try {
+    const parsedCatIds = JSON.parse(String(row.extra_category_ids || '[]'));
+    if (Array.isArray(parsedCatIds)) {
+      extraCategoryIds = Array.from(
+        new Set(
+          parsedCatIds
+            .map((n) => Number(n))
+            .filter((n) => Number.isInteger(n) && n > 0)
+        )
+      );
+    }
+  } catch {
+    extraCategoryIds = [];
   }
   return {
     id: Number(row.id),
@@ -479,8 +662,10 @@ export function mapWorkRow(row: Record<string, unknown>): WorkItem {
     media_mime: String(row.media_mime || ''),
     thumbnail_url: String(row.thumbnail_url || ''),
     gallery_urls: gallery,
+    extra_media: extraMedia,
     category_id: Number(row.category_id),
     subcategory_id: row.subcategory_id !== null && row.subcategory_id !== undefined ? Number(row.subcategory_id) : null,
+    extra_category_ids: extraCategoryIds,
     category_name: row.category_name ? String(row.category_name) : undefined,
     subcategory_name: row.subcategory_name ? String(row.subcategory_name) : null,
     keywords: String(row.keywords || ''),
@@ -489,6 +674,7 @@ export function mapWorkRow(row: Record<string, unknown>): WorkItem {
     embed_status: (row.embed_status as 'ok' | 'warning' | 'blocked') || 'ok',
     embed_note: String(row.embed_note || ''),
     views_count: Number(row.views_count || 0),
+    sort_order: Number(row.sort_order || 0),
     is_sample: Boolean(row.is_sample),
     created_at: String(row.created_at || ''),
     updated_at: String(row.updated_at || ''),
@@ -496,30 +682,75 @@ export function mapWorkRow(row: Record<string, unknown>): WorkItem {
 }
 
 export function getCategoriesWithCounts(publishedOnly: boolean): Category[] {
-  const countJoin = publishedOnly
-    ? `LEFT JOIN work_items w ON (w.category_id = c.id OR w.subcategory_id = c.id) AND w.status = 'published'`
-    : `LEFT JOIN work_items w ON (w.category_id = c.id OR w.subcategory_id = c.id)`;
-
-  const rows = db
+  const catRows = db
     .prepare(
-      `
-      SELECT c.*, COUNT(DISTINCT w.id) as item_count
-      FROM categories c
-      ${countJoin}
-      GROUP BY c.id
-      ORDER BY c.parent_id IS NOT NULL ASC, c.sort_order ASC, c.id ASC
-    `
+      `SELECT * FROM categories ORDER BY parent_id IS NOT NULL ASC, sort_order ASC, id ASC`
     )
     .all() as Array<Record<string, unknown>>;
 
-  return rows.map((r) => ({
-    id: Number(r.id),
-    name: String(r.name),
-    slug: String(r.slug),
-    parent_id: r.parent_id !== null && r.parent_id !== undefined ? Number(r.parent_id) : null,
-    description: String(r.description || ''),
-    sort_order: Number(r.sort_order || 0),
-    created_at: String(r.created_at || ''),
-    item_count: Number(r.item_count || 0),
-  }));
+  const parentById = new Map<number, number | null>();
+  for (const r of catRows) {
+    parentById.set(
+      Number(r.id),
+      r.parent_id !== null && r.parent_id !== undefined ? Number(r.parent_id) : null
+    );
+  }
+
+  const workRows = db
+    .prepare(
+      publishedOnly
+        ? `SELECT id, category_id, subcategory_id, extra_category_ids FROM work_items WHERE status = 'published'`
+        : `SELECT id, category_id, subcategory_id, extra_category_ids FROM work_items`
+    )
+    .all() as Array<Record<string, unknown>>;
+
+  const countMap = new Map<number, Set<number>>();
+  const addWorkToCat = (catId: number, workId: number) => {
+    let set = countMap.get(catId);
+    if (!set) {
+      set = new Set<number>();
+      countMap.set(catId, set);
+    }
+    set.add(workId);
+    const parentId = parentById.get(catId);
+    if (parentId) {
+      let pSet = countMap.get(parentId);
+      if (!pSet) {
+        pSet = new Set<number>();
+        countMap.set(parentId, pSet);
+      }
+      pSet.add(workId);
+    }
+  };
+
+  for (const w of workRows) {
+    const workId = Number(w.id);
+    if (w.category_id) addWorkToCat(Number(w.category_id), workId);
+    if (w.subcategory_id) addWorkToCat(Number(w.subcategory_id), workId);
+    try {
+      const extras = JSON.parse(String(w.extra_category_ids || '[]'));
+      if (Array.isArray(extras)) {
+        for (const rawId of extras) {
+          const cid = Number(rawId);
+          if (Number.isInteger(cid) && cid > 0) addWorkToCat(cid, workId);
+        }
+      }
+    } catch {
+      // ignore malformed json
+    }
+  }
+
+  return catRows.map((r) => {
+    const id = Number(r.id);
+    return {
+      id,
+      name: String(r.name),
+      slug: String(r.slug),
+      parent_id: r.parent_id !== null && r.parent_id !== undefined ? Number(r.parent_id) : null,
+      description: String(r.description || ''),
+      sort_order: Number(r.sort_order || 0),
+      created_at: String(r.created_at || ''),
+      item_count: countMap.get(id)?.size || 0,
+    };
+  });
 }

@@ -15,6 +15,7 @@ import { WorkCard } from '../../components/WorkCard.tsx';
 import { AudioRadioPlayer } from '../../components/MediaPlayer.tsx';
 import { isSafeUrl, normalizeImageUrl } from '../../lib/mediaUtils.ts';
 import { isSettingEnabled } from '../../lib/settingsDefaults.ts';
+import { resolveBackgroundStyle, resolveCardRadiusClass } from '../../lib/themePresets.ts';
 import type { Category, PlatformSettings, PublicSiteStats, WorkItem } from '../../types.ts';
 
 interface BootstrapPayload {
@@ -73,11 +74,15 @@ export function HomePage() {
 
   const totalPublishedCount = mainCategories.reduce((sum, c) => sum + (c.item_count || 0), 0);
   const accentColor = settings.primary_color || '#1E40AF';
+  const heroZoom = isSettingEnabled(settings.hero_zoom_enabled);
+  const cardBgStyle = resolveBackgroundStyle(settings.bg_cards, { isCard: true });
+  const radiusClass = resolveCardRadiusClass(settings.card_radius);
+  const homeBgStyle = resolveBackgroundStyle(settings.bg_home || settings.bg_site);
 
   return (
     <div className="space-y-16 md:space-y-20">
       {/* 1. Split Editorial Hero Section */}
-      <section className="bg-white border-b border-slate-200">
+      <section style={homeBgStyle} className="bg-white/90 border-b border-slate-200">
         <div className="max-w-[1240px] mx-auto px-4 sm:px-6 py-10 lg:py-14">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-stretch">
             {/* Hero Copy */}
@@ -138,7 +143,9 @@ export function HomePage() {
                     alt={settings.platform_title}
                     referrerPolicy="no-referrer"
                     onError={() => setHeroImgError(true)}
-                    className="w-full h-full lg:h-full object-cover animate-hero-zoom transition-transform duration-700"
+                    className={`w-full h-full lg:h-full object-cover transition-transform duration-700 ${
+                      heroZoom ? 'animate-hero-zoom' : ''
+                    }`}
                   />
                 ) : (
                   <div className="w-full h-full bg-gradient-to-br from-slate-100 to-slate-200 flex flex-col items-center justify-center p-8 text-slate-500">
@@ -211,7 +218,8 @@ export function HomePage() {
                 key={cat.id}
                 type="button"
                 onClick={() => navigate(`/works?categoryId=${cat.id}`)}
-                className="text-right bg-white border border-slate-200 rounded-xl p-5 hover:border-[#1E40AF]/50 hover:-translate-y-1 hover:scale-[1.02] hover:shadow-md active:scale-[0.98] transition-all duration-300 cursor-pointer group"
+                style={cardBgStyle}
+                className={`text-right bg-white border border-slate-200 ${radiusClass} p-5 hover:border-[#1E40AF]/50 hover:-translate-y-1 hover:scale-[1.02] hover:shadow-md active:scale-[0.98] transition-all duration-300 cursor-pointer group`}
               >
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <Layers className="w-5 h-5 text-[#1E40AF] transition-transform duration-300 group-hover:scale-110" />

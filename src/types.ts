@@ -126,6 +126,48 @@ export interface PlatformSettings {
   supervisor_title: string;
   supervisor_bio: string;
   about_faq_json: string;
+  // Comprehensive backgrounds, theme bank & extra platform controls
+  active_theme_id: string;
+  bg_site: string;
+  bg_home: string;
+  bg_pages: string;
+  bg_cards: string;
+  bg_work_detail: string;
+  font_family: string;
+  card_radius: string;
+  enable_ui_sounds: string;
+  hero_zoom_enabled: string;
+  announcement_enabled: string;
+  announcement_text: string;
+  default_catalog_sort: string;
+  hidden_nav_keys_json: string;
+  custom_nav_items_json: string;
+}
+
+export interface CustomNavItem {
+  id: string;
+  label: string;
+  target_type: 'category' | 'route' | 'url';
+  target_value: string;
+  enabled: boolean;
+}
+
+export type AdminPermission =
+  | 'manage_works'
+  | 'delete_works'
+  | 'manage_categories'
+  | 'manage_settings'
+  | 'manage_users';
+
+export interface AdminUserSummary {
+  id: number;
+  username: string;
+  display_name: string;
+  permissions: AdminPermission[];
+  is_active: boolean;
+  is_primary: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PublicSiteStats {
@@ -169,5 +211,8 @@ export interface AuthState {
   needsSetup: boolean;
   authenticated: boolean;
   username: string | null;
+  displayName?: string;
+  permissions: AdminPermission[];
+  isPrimary?: boolean;
   envManaged?: boolean;
 }
