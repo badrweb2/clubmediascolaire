@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 interface ConfirmActionDropdownProps {
@@ -56,8 +57,8 @@ export function ConfirmActionDropdown({
     }
     const rect = e.currentTarget.getBoundingClientRect();
     const cardWidth = 280;
-    const cardHeight = 160;
-    const margin = 10;
+    const cardHeight = 165;
+    const margin = 12;
 
     let left = rect.left;
     if (left + cardWidth > window.innerWidth - margin) {
@@ -117,54 +118,59 @@ export function ConfirmActionDropdown({
         ? 'bg-amber-600 hover:bg-amber-700'
         : 'bg-[#1E40AF] hover:bg-[#1E3A8A]';
 
+  const popover =
+    open && typeof document !== 'undefined'
+      ? createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-[90] bg-transparent"
+              onClick={() => {
+                if (!busy) setOpen(false);
+              }}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              style={{ top: coords.top, left: coords.left }}
+              className={`fixed z-[100] w-[280px] bg-white border ${borderTone} rounded-xl shadow-2xl p-4 text-right space-y-3 animate-fade-up`}
+            >
+              <div className={`flex items-center gap-1.5 font-bold text-xs ${headerTone}`}>
+                {variant === 'primary' ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                )}
+                <span>{resolvedTitle}</span>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">{message}</p>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setOpen(false)}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
+                >
+                  {cancelLabel}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleConfirm}
+                  className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-60 cursor-pointer ${btnTone}`}
+                >
+                  {busy ? resolvedBusy : resolvedConfirm}
+                </button>
+              </div>
+            </div>
+          </>,
+          document.body
+        )
+      : null;
+
   return (
     <>
       {renderTrigger({ onClick: handleToggle, isOpen: open })}
-
-      {open && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-transparent"
-            onClick={() => {
-              if (!busy) setOpen(false);
-            }}
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            style={{ top: coords.top, left: coords.left }}
-            className={`fixed z-50 w-[280px] bg-white border ${borderTone} rounded-xl shadow-xl p-4 text-right space-y-3 animate-fade-up`}
-          >
-            <div className={`flex items-center gap-1.5 font-bold text-xs ${headerTone}`}>
-              {variant === 'primary' ? (
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-              ) : (
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-              )}
-              <span>{resolvedTitle}</span>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">{message}</p>
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setOpen(false)}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
-              >
-                {cancelLabel}
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleConfirm}
-                className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-60 cursor-pointer ${btnTone}`}
-              >
-                {busy ? resolvedBusy : resolvedConfirm}
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+      {popover}
     </>
   );
 }

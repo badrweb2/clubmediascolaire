@@ -3,7 +3,7 @@ let soundsEnabled = true;
 let lastClickAt = 0;
 let initializedListener = false;
 
-function getAudioContext(): AudioContext | null {
+async function ensureReadyAudioContext(): Promise<AudioContext | null> {
   if (typeof window === 'undefined') return null;
   const Ctx =
     window.AudioContext ||
@@ -17,7 +17,11 @@ function getAudioContext(): AudioContext | null {
     }
   }
   if (audioCtx.state === 'suspended') {
-    audioCtx.resume().catch(() => {});
+    try {
+      await audioCtx.resume();
+    } catch {
+      return null;
+    }
   }
   return audioCtx;
 }
@@ -36,53 +40,54 @@ export function playClickSound(): void {
   if (nowMs - lastClickAt < 45) return;
   lastClickAt = nowMs;
 
-  const ctx = getAudioContext();
-  if (!ctx) return;
+  void ensureReadyAudioContext().then((ctx) => {
+    if (!ctx) return;
+    try {
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(760, t);
+      osc.frequency.exponentialRampToValueAtTime(340, t + 0.055);
 
-  try {
-    const t = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(640, t);
-    osc.frequency.exponentialRampToValueAtTime(290, t + 0.042);
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(0.16, t + 0.007);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.065);
 
-    gain.gain.setValueAtTime(0.001, t);
-    gain.gain.linearRampToValueAtTime(0.045, t + 0.006);
-    gain.gain.exponentialRampToValueAtTime(0.0008, t + 0.048);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(t);
-    osc.stop(t + 0.052);
-  } catch {
-    // ignore Web Audio restrictions
-  }
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.07);
+    } catch {
+      // ignore Web Audio restrictions
+    }
+  });
 }
 
 export function playNavSound(): void {
   if (!soundsEnabled) return;
-  const ctx = getAudioContext();
-  if (!ctx) return;
 
-  try {
-    const t = ctx.currentTime;
+  void ensureReadyAudioContext().then((ctx) => {
+    if (!ctx) return;
+    try {
+      const t = ctx.currentTime;
 
-    const osc1 = ctx.createOscillator();
-    const gain1 = ctx.createGain();
-    osc1.type = 'triangle';
-    osc1.frequency.setValueAtTime(523.25, t);
-    osc1.frequency.exponentialRampToValueAtTime(659.25, t + 0.085);
-    gain1.gain.setValueAtTime(0.001, t);
-    gain1.gain.linearRampToValueAtTime(0.036, t + 0.012);
-    gain1.gain.exponentialRampToValueAtTime(0.0008, t + 0.11);
-    osc1.connect(gain1);
-    gain1.connect(ctx.destination);
-    osc1.start(t);
-    osc1.stop(t + 0.12);
-  } catch {
-    // ignore Web Audio restrictions
-  }
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'triangle';
+      osc1.frequency.setValueAtTime(523.25, t);
+      osc1.frequency.exponentialRampToValueAtTime(783.99, t + 0.095);
+      gain1.gain.setValueAtTime(0.001, t);
+      gain1.gain.linearRampToValueAtTime(0.14, t + 0.012);
+      gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(t);
+      osc1.stop(t + 0.14);
+    } catch {
+      // ignore Web Audio restrictions
+    }
+  });
 }
 
 export function initGlobalUiSounds(): () => void {
@@ -96,7 +101,7 @@ export function initGlobalUiSounds(): () => void {
     const target = e.target as HTMLElement | null;
     if (!target) return;
     const interactive = target.closest(
-      'button:not(:disabled), a[href], [role="button"], select:not(:disabled), summary'
+      'button:not(:disabled), a[href], [role="button"], select:not(:disabled), summary, label input[type="checkbox"], label input[type="radio"]'
     );
     if (interactive) {
       playClickSound();

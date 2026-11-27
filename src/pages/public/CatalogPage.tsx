@@ -176,13 +176,15 @@ export function CatalogPage({ mode }: CatalogPageProps) {
     return categories.filter((c) => c.parent_id === activeMainCategory.id);
   }, [categories, activeMainCategory]);
 
+  const cardsGridClass = settings.cards_per_row === '4' ? 'lg:grid-cols-4' : 'lg:grid-cols-3';
+
   const resetFilters = () => {
     setQuery('');
     setSelectedCategoryId('');
     setSelectedType('');
     setSelectedGrade('');
     setDateFrom('');
-    setSort('custom');
+    setSort(settings.default_catalog_sort || 'custom');
     if (mode === 'all') {
       navigate('/works');
     }
@@ -435,7 +437,7 @@ export function CatalogPage({ mode }: CatalogPageProps) {
 
       {/* Results Grid */}
       {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardsGridClass} gap-6`}>
           {[1, 2, 3, 4, 5, 6].map((n) => (
             <div key={n} className="h-80 bg-white border border-slate-200 rounded-xl animate-pulse" />
           ))}
@@ -458,7 +460,7 @@ export function CatalogPage({ mode }: CatalogPageProps) {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardsGridClass} gap-6`}>
           {items.map((item) => (
             <WorkCard key={item.id} item={item} />
           ))}

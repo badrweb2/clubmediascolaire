@@ -2405,6 +2405,30 @@ export async function onRequest(context: EventContext): Promise<Response> {
       }
     }
 
+    if (method === 'PUT' && path === '/api/admin/categories/reorder') {
+      if (!hasPermissionD1(auth, 'manage_categories')) {
+        return jsonResponse({ error: 'ليس لديك صلاحية إدارة التصنيفات.' }, 403);
+      }
+      const body = (await request.json().catch(() => ({}))) as {
+        orders?: Array<{ id?: unknown; sort_order?: unknown }>;
+      };
+      const orders = Array.isArray(body.orders) ? body.orders : null;
+      if (!orders || orders.length === 0) {
+        return jsonResponse({ error: 'بيانات ترتيب التصنيفات غير صالحة.' }, 400);
+      }
+      const stmts: D1PreparedStatement[] = [];
+      for (const entry of orders) {
+        const id = Number(entry?.id);
+        const sortOrder = Number(entry?.sort_order);
+        if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(sortOrder) || sortOrder < 0) {
+          return jsonResponse({ error: 'أرقام ترتيب التصنيفات غير صالحة.' }, 400);
+        }
+        stmts.push(db.prepare('UPDATE categories SET sort_order = ? WHERE id = ?').bind(Math.floor(sortOrder), id));
+      }
+      await db.batch(stmts);
+      return jsonResponse({ categories: await getCategoriesD1(db, false) });
+    }
+
     const catIdMatch = path.match(/^\/api\/admin\/categories\/(\d+)$/);
     if (catIdMatch) {
       if (!hasPermissionD1(auth, 'manage_categories')) {
@@ -2482,8 +2506,12 @@ export async function onRequest(context: EventContext): Promise<Response> {
               }
               trimmed = normalizeBackgroundValue(trimmed);
             }
-            if (k === 'primary_color' && trimmed && !/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
-              return jsonResponse({ error: 'صيغة اللون الأساسي غير صالحة.' }, 400);
+            if (
+              (k === 'primary_color' || k === 'announcement_bg_color') &&
+              trimmed &&
+              !/^#[0-9a-fA-F]{6}$/.test(trimmed)
+            ) {
+              return jsonResponse({ error: `صيغة اللون المدخل للحقل ${k} غير صالحة.` }, 400);
             }
             stmts.push(
               db

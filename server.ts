@@ -1277,6 +1277,44 @@ app.post('/api/admin/categories', requirePermission('manage_categories'), (req, 
   });
 });
 
+app.put('/api/admin/categories/reorder', requirePermission('manage_categories'), (req, res) => {
+  const orders = Array.isArray(req.body?.orders) ? req.body.orders : null;
+  if (!orders || orders.length === 0) {
+    res.status(400).json({ error: 'بيانات ترتيب التصنيفات غير صالحة.' });
+    return;
+  }
+
+  const validEntries: Array<{ id: number; sort_order: number }> = [];
+  for (const entry of orders) {
+    const id = Number((entry as { id?: unknown })?.id);
+    const sortOrder = Number((entry as { sort_order?: unknown })?.sort_order);
+    if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(sortOrder) || sortOrder < 0) {
+      res.status(400).json({ error: 'أرقام ترتيب التصنيفات غير صالحة.' });
+      return;
+    }
+    validEntries.push({ id, sort_order: Math.floor(sortOrder) });
+  }
+
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    const upd = db.prepare('UPDATE categories SET sort_order = ? WHERE id = ?');
+    for (const item of validEntries) {
+      upd.run(item.sort_order, item.id);
+    }
+    db.exec('COMMIT');
+  } catch {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // ignore
+    }
+    res.status(500).json({ error: 'تعذر حفظ ترتيب التصنيفات.' });
+    return;
+  }
+
+  res.json({ categories: getCategoriesWithCounts(false) });
+});
+
 app.put('/api/admin/categories/:id', requirePermission('manage_categories'), (req, res) => {
   const id = Number(req.params.id);
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
@@ -1365,8 +1403,12 @@ app.put('/api/admin/settings', requirePermission('manage_settings'), (req, res) 
         }
         trimmed = normalizeBackgroundValue(trimmed);
       }
-      if (key === 'primary_color' && trimmed && !/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
-        res.status(400).json({ error: 'صيغة اللون الأساسي غير صالحة.' });
+      if (
+        (key === 'primary_color' || key === 'announcement_bg_color') &&
+        trimmed &&
+        !/^#[0-9a-fA-F]{6}$/.test(trimmed)
+      ) {
+        res.status(400).json({ error: `صيغة اللون المدخل للحقل ${key} غير صالحة.` });
         return;
       }
       upsert.run(key, trimmed);

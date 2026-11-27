@@ -10,6 +10,7 @@ import {
   Info,
   KeyRound,
   LayoutTemplate,
+  Megaphone,
   Palette,
   Plus,
   Save,
@@ -41,10 +42,11 @@ import {
   BACKGROUND_BANK,
   normalizeBackgroundValue,
   resolveBackgroundStyle,
+  resolveFontFamilyStack,
   THEME_BANK,
   type SiteThemePreset,
 } from '../../lib/themePresets.ts';
-import { playClickSound, playNavSound } from '../../lib/uiSounds.ts';
+import { playClickSound, playNavSound, setUiSoundsEnabled } from '../../lib/uiSounds.ts';
 import type {
   AdminPermission,
   AdminUserSummary,
@@ -161,8 +163,9 @@ export function AdminSettingsPage() {
     null
   );
 
-  // Copy feedback for background bank
+  // Copy feedback for background bank & theme filter
   const [copiedBgId, setCopiedBgId] = useState<string | null>(null);
+  const [themeCategoryFilter, setThemeCategoryFilter] = useState<'all' | 'kids' | 'educational' | 'classic'>('all');
 
   // New custom nav button builder
   const [newNavLabel, setNewNavLabel] = useState('');
@@ -587,19 +590,69 @@ export function AdminSettingsPage() {
               <div className="space-y-6">
                 {/* Site Theme Bank */}
                 <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-                  <div>
-                    <h2 className="font-display text-lg font-bold text-slate-900 flex items-center gap-2">
-                      <Palette className="w-5 h-5 text-[#1E40AF]" />
-                      <span>بنك الثيمات العام للموقع (Theme Bank)</span>
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-1">
-                      اختر ثيماً متناسقاً لتطبيق الألوان والخلفيات والخطوط وحواف البطاقات تلقائياً على كامل المنصة.
-                    </p>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h2 className="font-display text-lg font-bold text-slate-900 flex items-center gap-2">
+                        <Palette className="w-5 h-5 text-[#1E40AF]" />
+                        <span>بنك الثيمات العام للموقع (Theme Bank)</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-1">
+                        اختر ثيماً متناسقاً (أكاديمي، تعليمي، أو طفولي مبهج) لتطبيق الألوان والخلفيات والخطوط وحواف البطاقات تلقائياً.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      {(
+                        [
+                          { id: 'all', label: `الكل (${THEME_BANK.length})` },
+                          {
+                            id: 'kids',
+                            label: `طفولية مبهجة (${THEME_BANK.filter((t) => t.category === 'kids').length})`,
+                          },
+                          {
+                            id: 'educational',
+                            label: `تعليمية (${THEME_BANK.filter((t) => t.category === 'educational').length})`,
+                          },
+                          {
+                            id: 'classic',
+                            label: `كلاسيكية (${THEME_BANK.filter((t) => t.category === 'classic').length})`,
+                          },
+                        ] as const
+                      ).map((tabItem) => (
+                        <button
+                          key={tabItem.id}
+                          type="button"
+                          onClick={() => setThemeCategoryFilter(tabItem.id)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                            themeCategoryFilter === tabItem.id
+                              ? 'bg-[#1E40AF] text-white border-[#1E40AF]'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {tabItem.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {THEME_BANK.map((preset) => {
+                    {THEME_BANK.filter(
+                      (preset) =>
+                        themeCategoryFilter === 'all' || preset.category === themeCategoryFilter
+                    ).map((preset) => {
                       const isActive = form.active_theme_id === preset.id;
+                      const catLabel =
+                        preset.category === 'kids'
+                          ? 'ثيم طفولي مبهج'
+                          : preset.category === 'educational'
+                            ? 'ثيم تعليمي'
+                            : 'ثيم كلاسيكي';
+                      const catTone =
+                        preset.category === 'kids'
+                          ? 'bg-orange-50 text-orange-700 border-orange-200'
+                          : preset.category === 'educational'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-slate-100 text-slate-700 border-slate-200';
                       return (
                         <div
                           key={preset.id}
@@ -610,11 +663,18 @@ export function AdminSettingsPage() {
                           }`}
                         >
                           <div className="space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-display text-sm font-bold text-slate-900">
-                                {preset.name}
-                              </span>
-                              <div className="flex items-center gap-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="space-y-1">
+                                <span
+                                  className={`inline-block text-[10px] font-medium px-2 py-0.5 rounded border ${catTone}`}
+                                >
+                                  {catLabel}
+                                </span>
+                                <div className="font-display text-sm font-bold text-slate-900">
+                                  {preset.name}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0 pt-0.5">
                                 {preset.swatch.map((hex, i) => (
                                   <span
                                     key={i}
@@ -1363,7 +1423,7 @@ export function AdminSettingsPage() {
                       <span>إعدادات أخرى متقدمة (الأصوات، الخطوط، الترتيب، التنبيهات)</span>
                     </h2>
                     <p className="text-xs text-slate-500 mt-1">
-                      خيارات إضافية للتحكم في تجربة التصفح التفاعلية والشكل الهندسي للبطاقات والشريط الإخباري.
+                      خيارات إضافية للتحكم في تجربة التصفح التفاعلية، الخط العربي، حجم العرض، عدد البطاقات، والشريط الإعلاني.
                     </p>
                   </div>
 
@@ -1374,7 +1434,12 @@ export function AdminSettingsPage() {
                         <input
                           type="checkbox"
                           checked={isSettingEnabled(form.enable_ui_sounds)}
-                          onChange={() => toggleFlag('enable_ui_sounds')}
+                          onChange={() => {
+                            const nextEnabled = !isSettingEnabled(form.enable_ui_sounds);
+                            setUiSoundsEnabled(nextEnabled);
+                            setForm((f) => ({ ...f, enable_ui_sounds: nextEnabled ? '1' : '0' }));
+                            if (nextEnabled) playClickSound();
+                          }}
                           className="w-4 h-4 accent-[#1E40AF] rounded"
                         />
                         <span>أصوات التفاعل عند النقر والتصفح</span>
@@ -1382,10 +1447,14 @@ export function AdminSettingsPage() {
                       <button
                         type="button"
                         onClick={() => {
+                          setUiSoundsEnabled(true);
                           playClickSound();
                           setTimeout(() => playNavSound(), 140);
+                          if (!isSettingEnabled(form.enable_ui_sounds)) {
+                            setUiSoundsEnabled(false);
+                          }
                         }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
                       >
                         <Volume2 className="w-3.5 h-3.5 text-[#1E40AF]" />
                         <span>تجربة الصوت</span>
@@ -1402,9 +1471,32 @@ export function AdminSettingsPage() {
                       />
                       <span>تفعيل حركة الزوم التلقائي في صورة الواجهة الرئيسية</span>
                     </label>
+
+                    {/* Animations Toggle */}
+                    <label className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-center gap-2.5 cursor-pointer text-sm font-medium text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={isSettingEnabled(form.enable_animations)}
+                        onChange={() => toggleFlag('enable_animations')}
+                        className="w-4 h-4 accent-[#1E40AF] rounded"
+                      />
+                      <span>تفعيل التأثيرات والحركات التفاعلية على الأزرار والبطاقات</span>
+                    </label>
+
+                    {/* Back to Top Toggle */}
+                    <label className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex items-center gap-2.5 cursor-pointer text-sm font-medium text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={isSettingEnabled(form.show_back_to_top)}
+                        onChange={() => toggleFlag('show_back_to_top')}
+                        className="w-4 h-4 accent-[#1E40AF] rounded"
+                      />
+                      <span>إظهار زر «العودة للأعلى» العائم للزوار</span>
+                    </label>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Fonts, Radius, Sort, Font Size, Cards per row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div>
                       <label className="block text-xs font-medium text-slate-600 mb-1.5">
                         الخط العربي المعتمد بالمنصة
@@ -1417,6 +1509,43 @@ export function AdminSettingsPage() {
                         <option value="ibm">IBM Plex Sans Arabic (الافتراضي)</option>
                         <option value="cairo">Cairo — خط القاهرة العصري</option>
                         <option value="tajawal">Tajawal — خط تجوّل الواضح</option>
+                        <option value="almarai">Almarai — خط المراعي المدرسي</option>
+                        <option value="kufi">Noto Kufi Arabic — خط كوفي أنيق</option>
+                        <option value="changa">Changa — خط طفولي وحيوي</option>
+                        <option value="amiri">Amiri — خط أميري الأدبي التراثي</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                        حجم الخط العام للقراءة
+                      </label>
+                      <select
+                        value={form.font_size_scale}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, font_size_scale: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                      >
+                        <option value="compact">مدمج ومريح (15px)</option>
+                        <option value="normal">عادي متوازن (الافتراضي 16px)</option>
+                        <option value="large">كبير وواضح للتلاميذ (17.5px)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                        عدد البطاقات في الصف الواحد
+                      </label>
+                      <select
+                        value={form.cards_per_row}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, cards_per_row: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                      >
+                        <option value="3">3 بطاقات في الصف (الافتراضي)</option>
+                        <option value="4">4 بطاقات في الصف (عرض مكثف)</option>
                       </select>
                     </div>
 
@@ -1430,14 +1559,14 @@ export function AdminSettingsPage() {
                         className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
                       >
                         <option value="rounded">متوسطة الانحناء (الافتراضي)</option>
-                        <option value="soft">ناعمة ومستديرة</option>
+                        <option value="soft">ناعمة ومستديرة (مناسب للطفولة)</option>
                         <option value="sharp">رسمية بحواف حادة</option>
                       </select>
                     </div>
 
-                    <div>
+                    <div className="sm:col-span-2 lg:col-span-2">
                       <label className="block text-xs font-medium text-slate-600 mb-1.5">
-                        الترتيب الافتراضي في صفحات المعرض
+                        الترتيب الافتراضي في صفحات المعرض والأقسام
                       </label>
                       <select
                         value={form.default_catalog_sort}
@@ -1446,7 +1575,7 @@ export function AdminSettingsPage() {
                         }
                         className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
                       >
-                        <option value="custom">الترتيب المخصص من الإدارة</option>
+                        <option value="custom">الترتيب المخصص من الإدارة (الأرقام الترتيبية)</option>
                         <option value="newest">الأحدث نشراً أولاً</option>
                         <option value="views">الأكثر مشاهدة</option>
                         <option value="oldest">الأقدم أولاً</option>
@@ -1454,26 +1583,100 @@ export function AdminSettingsPage() {
                     </div>
                   </div>
 
+                  {/* Live Font Preview Box */}
+                  <div
+                    style={{ fontFamily: resolveFontFamilyStack(form.font_family).sans }}
+                    className="p-4 rounded-xl border border-blue-100 bg-blue-50/40 space-y-1"
+                  >
+                    <div className="text-[11px] font-medium text-[#1E40AF]">
+                      معاينة فورية للخط المختار قبل الحفظ:
+                    </div>
+                    <div className="text-base font-bold text-slate-900">
+                      المنصة التعليمية لمدرسة الحسن الداخل — معرض الإبداع الطلابي
+                    </div>
+                    <p className="text-xs text-slate-600">
+                      نموذج لعرض العناوين والفقرات التربوية بالخط العربي المختار عند حفظ الإعدادات.
+                    </p>
+                  </div>
+
                   {/* Announcement Banner */}
                   <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
-                    <label className="flex items-center gap-2.5 cursor-pointer text-sm font-medium text-slate-800">
-                      <input
-                        type="checkbox"
-                        checked={isSettingEnabled(form.announcement_enabled)}
-                        onChange={() => toggleFlag('announcement_enabled')}
-                        className="w-4 h-4 accent-[#1E40AF] rounded"
-                      />
-                      <span>إظهار شريط إعلان وتنبيه أعلى المنصة للزوار</span>
-                    </label>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <label className="flex items-center gap-2.5 cursor-pointer text-sm font-medium text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={isSettingEnabled(form.announcement_enabled)}
+                          onChange={() => toggleFlag('announcement_enabled')}
+                          className="w-4 h-4 accent-[#1E40AF] rounded"
+                        />
+                        <span>إظهار شريط إعلان وتنبيه أعلى المنصة للزوار</span>
+                      </label>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-600">لون الشريط:</span>
+                        <input
+                          type="color"
+                          value={
+                            /^#[0-9a-fA-F]{6}$/.test(form.announcement_bg_color)
+                              ? form.announcement_bg_color
+                              : /^#[0-9a-fA-F]{6}$/.test(form.primary_color)
+                                ? form.primary_color
+                                : '#1E40AF'
+                          }
+                          onChange={(e) =>
+                            setForm((f) => ({ ...f, announcement_bg_color: e.target.value }))
+                          }
+                          className="w-8 h-8 rounded border border-slate-300 bg-white cursor-pointer p-0.5"
+                        />
+                        {form.announcement_bg_color && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setForm((f) => ({ ...f, announcement_bg_color: '' }))
+                            }
+                            className="text-[11px] text-slate-600 hover:underline cursor-pointer"
+                          >
+                            لون الثيم
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
                     <input
                       type="text"
                       value={form.announcement_text}
-                      onChange={(e) =>
-                        setForm((f) => ({ ...f, announcement_text: e.target.value }))
-                      }
+                      onChange={(e) => {
+                        const nextText = e.target.value;
+                        setForm((f) => ({
+                          ...f,
+                          announcement_text: nextText,
+                          announcement_enabled:
+                            !f.announcement_text.trim() && nextText.trim()
+                              ? '1'
+                              : f.announcement_enabled,
+                        }));
+                      }}
                       placeholder="مثال: باب المشاركة في المسابقة الثقافية مفتوح إلى غاية نهاية الشهر..."
                       className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-sm"
                     />
+
+                    {form.announcement_text.trim() && (
+                      <div className="space-y-1">
+                        <div className="text-[11px] text-slate-500">
+                          معاينة الشريط الإعلاني ({isSettingEnabled(form.announcement_enabled) ? 'مفعّل للظهور' : 'مخفي حالياً — فعّل الخيار أعلاه لإظهاره'}):
+                        </div>
+                        <div
+                          style={{
+                            backgroundColor:
+                              form.announcement_bg_color || form.primary_color || '#1E40AF',
+                          }}
+                          className="rounded-lg text-white text-xs sm:text-sm font-medium px-4 py-2 flex items-center justify-center gap-2 text-center"
+                        >
+                          <Megaphone className="w-4 h-4 shrink-0" />
+                          <span>{form.announcement_text}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </section>
               </div>

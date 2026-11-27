@@ -122,7 +122,6 @@ export function AdminWorksPage() {
   );
 
   const [previewItem, setPreviewItem] = useState<WorkItem | null>(null);
-  const [clearingSamples, setClearingSamples] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
 
   // Live Excel export & Bulk Import state
@@ -311,17 +310,6 @@ export function AdminWorksPage() {
     }
   };
 
-  const handleClearSamples = async () => {
-    setClearingSamples(true);
-    try {
-      await apiFetch('/api/admin/works/samples', { method: 'DELETE' });
-      await loadWorks();
-      await refreshPublicBootstrap();
-    } finally {
-      setClearingSamples(false);
-    }
-  };
-
   const handleDownloadLiveExcel = async (includeExistingWorks: boolean) => {
     setExportingExcel(true);
     setOrderFeedback(null);
@@ -497,7 +485,6 @@ export function AdminWorksPage() {
     }
   };
 
-  const hasSamples = items.some((i) => i.is_sample);
   const quickSubCategories = useMemo(
     () => categories.filter((c) => c.parent_id === quickCatId),
     [categories, quickCatId]
@@ -572,25 +559,6 @@ export function AdminWorksPage() {
                   >
                     <ListOrdered className="w-4 h-4 text-[#1E40AF]" />
                     <span>ترقيم تسلسلي</span>
-                  </button>
-                )}
-              />
-            )}
-
-            {hasSamples && hasPermission('delete_works') && (
-              <ConfirmDeleteDropdown
-                title="حذف البيانات التجريبية"
-                message="سيتم حذف جميع الإنتاجات التجريبية الأولية مع الإبقاء على المحتويات التي أضفتها."
-                confirmLabel="حذف التجريبية"
-                busy={clearingSamples}
-                onConfirm={handleClearSamples}
-                renderTrigger={({ onClick }) => (
-                  <button
-                    type="button"
-                    onClick={onClick}
-                    className="px-3 py-2.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
-                  >
-                    حذف التجريبية
                   </button>
                 )}
               />

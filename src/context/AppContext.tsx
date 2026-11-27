@@ -98,7 +98,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const stack = resolveFontFamilyStack(settings.font_family);
     document.documentElement.style.setProperty('--font-sans', stack.sans);
     document.documentElement.style.setProperty('--font-display', stack.display);
+    document.documentElement.style.setProperty('--default-font-family', stack.sans);
+    document.body.style.fontFamily = stack.sans;
   }, [settings.font_family]);
+
+  useEffect(() => {
+    const scale = settings.font_size_scale;
+    document.documentElement.style.fontSize =
+      scale === 'compact' ? '15px' : scale === 'large' ? '17.5px' : '16px';
+  }, [settings.font_size_scale]);
+
+  useEffect(() => {
+    const animationsEnabled = isSettingEnabled(settings.enable_animations);
+    document.documentElement.classList.toggle('reduce-motion-platform', !animationsEnabled);
+  }, [settings.enable_animations]);
 
   useEffect(() => {
     const onPopState = () => {

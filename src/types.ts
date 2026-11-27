@@ -139,7 +139,12 @@ export interface PlatformSettings {
   hero_zoom_enabled: string;
   announcement_enabled: string;
   announcement_text: string;
+  announcement_bg_color: string;
   default_catalog_sort: string;
+  font_size_scale: string;
+  cards_per_row: string;
+  enable_animations: string;
+  show_back_to_top: string;
   hidden_nav_keys_json: string;
   custom_nav_items_json: string;
 }

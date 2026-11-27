@@ -78,6 +78,9 @@ export function HomePage() {
   const cardBgStyle = resolveBackgroundStyle(settings.bg_cards, { isCard: true });
   const radiusClass = resolveCardRadiusClass(settings.card_radius);
   const homeBgStyle = resolveBackgroundStyle(settings.bg_home || settings.bg_site);
+  const isFourCols = settings.cards_per_row === '4';
+  const cardsGridClass = isFourCols ? 'lg:grid-cols-4' : 'lg:grid-cols-3';
+  const featuredLimit = isFourCols ? 4 : 3;
 
   return (
     <div className="space-y-16 md:space-y-20">
@@ -268,8 +271,8 @@ export function HomePage() {
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {(sections?.latest || []).slice(0, 6).map((item) => (
+            <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardsGridClass} gap-6`}>
+              {(sections?.latest || []).slice(0, isFourCols ? 8 : 6).map((item) => (
                 <WorkCard key={item.id} item={item} />
               ))}
             </div>
@@ -306,8 +309,8 @@ export function HomePage() {
                       <ArrowLeft className="w-4 h-4" />
                     </button>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {sections.featured.slice(0, 3).map((item) => (
+                  <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardsGridClass} gap-6`}>
+                    {sections.featured.slice(0, featuredLimit).map((item) => (
                       <WorkCard key={item.id} item={item} />
                     ))}
                   </div>
@@ -334,8 +337,8 @@ export function HomePage() {
                       <ArrowLeft className="w-4 h-4" />
                     </button>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {sections.mostViewed.slice(0, 3).map((item) => (
+                  <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardsGridClass} gap-6`}>
+                    {sections.mostViewed.slice(0, featuredLimit).map((item) => (
                       <WorkCard key={item.id} item={item} />
                     ))}
                   </div>
@@ -418,8 +421,8 @@ export function HomePage() {
                   <ArrowLeft className="w-4 h-4" />
                 </button>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {sections.artCorner.slice(0, 3).map((item) => (
+              <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardsGridClass} gap-6`}>
+                {sections.artCorner.slice(0, featuredLimit).map((item) => (
                   <WorkCard key={item.id} item={item} />
                 ))}
               </div>
@@ -446,8 +449,8 @@ export function HomePage() {
                   <ArrowLeft className="w-4 h-4" />
                 </button>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {sections.videoCorner.slice(0, 3).map((item) => (
+              <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardsGridClass} gap-6`}>
+                {sections.videoCorner.slice(0, featuredLimit).map((item) => (
                   <WorkCard key={item.id} item={item} />
                 ))}
               </div>
@@ -474,8 +477,8 @@ export function HomePage() {
                   <ArrowLeft className="w-4 h-4" />
                 </button>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {sections.projectCorner.slice(0, 3).map((item) => (
+              <div className={`grid grid-cols-1 sm:grid-cols-2 ${cardsGridClass} gap-6`}>
+                {sections.projectCorner.slice(0, featuredLimit).map((item) => (
                   <WorkCard key={item.id} item={item} />
                 ))}
               </div>

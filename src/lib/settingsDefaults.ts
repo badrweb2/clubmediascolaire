@@ -101,7 +101,12 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   hero_zoom_enabled: '1',
   announcement_enabled: '0',
   announcement_text: '',
+  announcement_bg_color: '',
   default_catalog_sort: 'custom',
+  font_size_scale: 'normal',
+  cards_per_row: '3',
+  enable_animations: '1',
+  show_back_to_top: '1',
   hidden_nav_keys_json: '[]',
   custom_nav_items_json: '[]',
 };

@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { ShieldAlert } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ArrowUp, Megaphone, ShieldAlert } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext.tsx';
 import { VisitorHeader } from './components/VisitorHeader.tsx';
 import { VisitorFooter } from './components/VisitorFooter.tsx';
@@ -72,6 +72,16 @@ function ProtectedAdminGate({
 
 function RouterView() {
   const { pathname, settings } = useApp();
+  const [showBackToTop, setShowBackToTop] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => {
+      setShowBackToTop(window.scrollY > 320);
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   // Admin routes (strictly separated from visitor UI)
   if (pathname === '/admin/login') {
@@ -170,6 +180,9 @@ function RouterView() {
   const pageBackgroundStyle = resolveBackgroundStyle(routeBgRaw);
   const showAnnouncement =
     isSettingEnabled(settings.announcement_enabled) && settings.announcement_text.trim().length > 0;
+  const announcementColor =
+    settings.announcement_bg_color || settings.primary_color || '#1E40AF';
+  const backToTopEnabled = isSettingEnabled(settings.show_back_to_top);
 
   return (
     <div
@@ -178,15 +191,31 @@ function RouterView() {
     >
       {showAnnouncement && (
         <div
-          style={{ backgroundColor: settings.primary_color || '#1E40AF' }}
-          className="text-white text-xs sm:text-sm font-medium text-center px-4 py-2"
+          style={{ backgroundColor: announcementColor }}
+          className="text-white text-xs sm:text-sm font-medium px-4 py-2.5 shadow-xs"
         >
-          {settings.announcement_text}
+          <div className="max-w-[1240px] mx-auto flex items-center justify-center gap-2 text-center">
+            <Megaphone className="w-4 h-4 shrink-0" />
+            <span>{settings.announcement_text}</span>
+          </div>
         </div>
       )}
       <VisitorHeader />
       <main className="flex-1">{publicContent}</main>
       <VisitorFooter />
+
+      {backToTopEnabled && showBackToTop && (
+        <button
+          type="button"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          style={{ backgroundColor: settings.primary_color || '#1E40AF' }}
+          title="العودة للأعلى"
+          aria-label="العودة للأعلى"
+          className="fixed bottom-6 left-6 z-40 w-11 h-11 rounded-full text-white shadow-lg flex items-center justify-center transition-all duration-300 hover:scale-110 hover:shadow-xl active:scale-95 cursor-pointer"
+        >
+          <ArrowUp className="w-5 h-5" />
+        </button>
+      )}
     </div>
   );
 }
