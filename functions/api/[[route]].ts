@@ -234,6 +234,7 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
       extra_media TEXT NOT NULL DEFAULT '[]',
       category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
       subcategory_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+      extra_category_ids TEXT NOT NULL DEFAULT '[]',
       keywords TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'published',
       featured INTEGER NOT NULL DEFAULT 0,
@@ -566,6 +567,9 @@ async function ensureD1Ready(db: D1Database): Promise<void> {
   if (!workCols.some((c) => c.name === 'extra_media')) {
     await db.prepare(`ALTER TABLE work_items ADD COLUMN extra_media TEXT NOT NULL DEFAULT '[]'`).run();
   }
+  if (!workCols.some((c) => c.name === 'extra_category_ids')) {
+    await db.prepare(`ALTER TABLE work_items ADD COLUMN extra_category_ids TEXT NOT NULL DEFAULT '[]'`).run();
+  }
 
   const sortOrderMigrated = await db
     .prepare(`SELECT value FROM platform_settings WHERE key = '_internal_work_sort_order_migrated'`)
@@ -699,6 +703,21 @@ function mapWorkRow(row: Record<string, unknown>): WorkItem {
   } catch {
     extraMedia = [];
   }
+  let extraCategoryIds: number[] = [];
+  try {
+    const parsedCatIds = JSON.parse(String(row.extra_category_ids || '[]'));
+    if (Array.isArray(parsedCatIds)) {
+      extraCategoryIds = Array.from(
+        new Set(
+          parsedCatIds
+            .map((n) => Number(n))
+            .filter((n) => Number.isInteger(n) && n > 0)
+        )
+      );
+    }
+  } catch {
+    extraCategoryIds = [];
+  }
   return {
     id: Number(row.id),
     title: String(row.title || ''),
@@ -720,6 +739,7 @@ function mapWorkRow(row: Record<string, unknown>): WorkItem {
       row.subcategory_id !== null && row.subcategory_id !== undefined
         ? Number(row.subcategory_id)
         : null,
+    extra_category_ids: extraCategoryIds,
     category_name: row.category_name ? String(row.category_name) : undefined,
     subcategory_name: row.subcategory_name ? String(row.subcategory_name) : null,
     keywords: String(row.keywords || ''),
@@ -766,6 +786,21 @@ function sanitizeExtraMediaEdge(raw: unknown): ExtraMediaItem[] {
   return out;
 }
 
+function sanitizeExtraCategoryIdsEdge(
+  raw: unknown,
+  primaryCatId: number,
+  primarySubId: number | null
+): number[] {
+  if (!Array.isArray(raw)) return [];
+  return Array.from(
+    new Set(
+      raw
+        .map((n) => Number(n))
+        .filter((n) => Number.isInteger(n) && n > 0 && n !== primaryCatId && n !== primarySubId)
+    )
+  );
+}
+
 async function getSettingsD1(db: D1Database): Promise<PlatformSettings> {
   const { results = [] } = await db
     .prepare(`SELECT key, value FROM platform_settings WHERE key NOT LIKE '_internal_%'`)
@@ -799,25 +834,128 @@ async function getPublicSiteStatsD1(db: D1Database): Promise<PublicSiteStats> {
 }
 
 async function getCategoriesD1(db: D1Database, publishedOnly: boolean): Promise<Category[]> {
-  const joinSql = publishedOnly
-    ? `LEFT JOIN work_items w ON (w.category_id = c.id OR w.subcategory_id = c.id) AND w.status = 'published'`
-    : `LEFT JOIN work_items w ON (w.category_id = c.id OR w.subcategory_id = c.id)`;
+  const [{ results: catRows = [] }, { results: workRows = [] }] = await Promise.all([
+    db
+      .prepare(`SELECT * FROM categories ORDER BY parent_id IS NOT NULL ASC, sort_order ASC, id ASC`)
+      .all<Record<string, unknown>>(),
+    db
+      .prepare(
+        publishedOnly
+          ? `SELECT id, category_id, subcategory_id, extra_category_ids FROM work_items WHERE status = 'published'`
+          : `SELECT id, category_id, subcategory_id, extra_category_ids FROM work_items`
+      )
+      .all<Record<string, unknown>>(),
+  ]);
+
+  const parentById = new Map<number, number | null>();
+  for (const r of catRows) {
+    parentById.set(
+      Number(r.id),
+      r.parent_id !== null && r.parent_id !== undefined ? Number(r.parent_id) : null
+    );
+  }
+
+  const countMap = new Map<number, Set<number>>();
+  const addWorkToCat = (catId: number, workId: number) => {
+    let set = countMap.get(catId);
+    if (!set) {
+      set = new Set<number>();
+      countMap.set(catId, set);
+    }
+    set.add(workId);
+    const parentId = parentById.get(catId);
+    if (parentId) {
+      let pSet = countMap.get(parentId);
+      if (!pSet) {
+        pSet = new Set<number>();
+        countMap.set(parentId, pSet);
+      }
+      pSet.add(workId);
+    }
+  };
+
+  for (const w of workRows) {
+    const workId = Number(w.id);
+    if (w.category_id) addWorkToCat(Number(w.category_id), workId);
+    if (w.subcategory_id) addWorkToCat(Number(w.subcategory_id), workId);
+    try {
+      const extras = JSON.parse(String(w.extra_category_ids || '[]'));
+      if (Array.isArray(extras)) {
+        for (const rawId of extras) {
+          const cid = Number(rawId);
+          if (Number.isInteger(cid) && cid > 0) addWorkToCat(cid, workId);
+        }
+      }
+    } catch {
+      // ignore malformed json
+    }
+  }
+
+  return catRows.map((r) => {
+    const id = Number(r.id);
+    return {
+      id,
+      name: String(r.name),
+      slug: String(r.slug),
+      parent_id: r.parent_id !== null && r.parent_id !== undefined ? Number(r.parent_id) : null,
+      description: String(r.description || ''),
+      sort_order: Number(r.sort_order || 0),
+      created_at: String(r.created_at || ''),
+      item_count: countMap.get(id)?.size || 0,
+    };
+  });
+}
+
+async function getCategoryTreeIdsD1(db: D1Database, categoryId: number): Promise<number[]> {
   const { results = [] } = await db
-    .prepare(
-      `SELECT c.*, COUNT(DISTINCT w.id) as item_count FROM categories c ${joinSql} GROUP BY c.id ORDER BY c.parent_id IS NOT NULL ASC, c.sort_order ASC, c.id ASC`
-    )
-    .all<Record<string, unknown>>();
-  return results.map((r) => ({
-    id: Number(r.id),
-    name: String(r.name),
-    slug: String(r.slug),
-    parent_id:
-      r.parent_id !== null && r.parent_id !== undefined ? Number(r.parent_id) : null,
-    description: String(r.description || ''),
-    sort_order: Number(r.sort_order || 0),
-    created_at: String(r.created_at || ''),
-    item_count: Number(r.item_count || 0),
-  }));
+    .prepare('SELECT id FROM categories WHERE parent_id = ?')
+    .bind(categoryId)
+    .all<{ id: number }>();
+  return Array.from(new Set([categoryId, ...results.map((c) => Number(c.id))]));
+}
+
+function buildCategoryFilterSqlD1(categoryIds: number[]): { sql: string; params: number[] } {
+  const uniqueIds = Array.from(new Set(categoryIds.filter((n) => Number.isInteger(n) && n > 0)));
+  if (uniqueIds.length === 0) return { sql: '1 = 0', params: [] };
+  const placeholders = uniqueIds.map(() => '?').join(', ');
+  const sql = `(
+    w.category_id IN (${placeholders})
+    OR w.subcategory_id IN (${placeholders})
+    OR (json_valid(w.extra_category_ids) AND EXISTS (
+      SELECT 1 FROM json_each(w.extra_category_ids)
+      WHERE CAST(value AS INTEGER) IN (${placeholders})
+    ))
+  )`;
+  return { sql, params: [...uniqueIds, ...uniqueIds, ...uniqueIds] };
+}
+
+function getCornerIdsFromList(
+  cats: Category[],
+  matchType: 'audio' | 'art' | 'video' | 'project'
+): number[] {
+  const mains = cats.filter((c) => c.parent_id === null);
+  let targetRoots: number[] = [];
+  if (matchType === 'audio') {
+    const m = mains.find((c) => c.slug === 'audio-radio') || mains.find((c) => /إذاعة|صوت/.test(c.name));
+    if (m) targetRoots = [m.id];
+  } else if (matchType === 'art') {
+    const m = mains.find((c) => c.slug === 'arts-photos') || mains.find((c) => /فنون|تشكيلية|صور/.test(c.name));
+    if (m) targetRoots = [m.id];
+  } else if (matchType === 'video') {
+    const m = mains.find((c) => c.slug === 'videos') || mains.find((c) => /فيديو/.test(c.name));
+    if (m) targetRoots = [m.id];
+  } else if (matchType === 'project') {
+    targetRoots = mains
+      .filter((c) => c.slug === 'projects' || c.slug === 'research-presentations' || /مشاريع|ابتكار|عروض|بحوث/.test(c.name))
+      .map((c) => c.id);
+  }
+  if (targetRoots.length === 0) return [];
+  const rootSet = new Set(targetRoots);
+  const allIds = [...targetRoots];
+  for (const c of cats) {
+    if (c.parent_id && rootSet.has(c.parent_id)) allIds.push(c.id);
+  }
+  return allIds;
 }
 
 async function queryWorksD1(
@@ -1194,25 +1332,40 @@ export async function onRequest(context: EventContext): Promise<Response> {
 
   // Public bootstrap
   if (method === 'GET' && path === '/api/public/bootstrap') {
-    const [settings, categories, siteStats, latest, mostViewed, featured, radioCorner, artCorner, videoCorner, projectCorner] =
-      await Promise.all([
-        getSettingsD1(db),
-        getCategoriesD1(db, true),
-        getPublicSiteStatsD1(db),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 8),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked'`, [], 'w.views_count DESC, w.id DESC', 6),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.featured = 1 AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 6),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.content_type = 'audio' AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 4),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.content_type = 'image' AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 6),
-        queryWorksD1(db, `WHERE w.status = 'published' AND w.content_type = 'video' AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 4),
-        queryWorksD1(
-          db,
-          `WHERE w.status = 'published' AND w.content_type IN ('project', 'presentation', 'pdf') AND w.embed_status != 'blocked'`,
-          [],
-          CUSTOM_WORK_ORDER_SQL,
-          6
-        ),
-      ]);
+    const [settings, categories, siteStats, latest, mostViewed, featured] = await Promise.all([
+      getSettingsD1(db),
+      getCategoriesD1(db, true),
+      getPublicSiteStatsD1(db),
+      queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 8),
+      queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked'`, [], 'w.views_count DESC, w.id DESC', 6),
+      queryWorksD1(db, `WHERE w.status = 'published' AND w.featured = 1 AND w.embed_status != 'blocked'`, [], CUSTOM_WORK_ORDER_SQL, 6),
+    ]);
+
+    const radioIds = getCornerIdsFromList(categories, 'audio');
+    const artIds = getCornerIdsFromList(categories, 'art');
+    const videoIds = getCornerIdsFromList(categories, 'video');
+    const projectIds = getCornerIdsFromList(categories, 'project');
+
+    const radioFilter = buildCategoryFilterSqlD1(radioIds);
+    const artFilter = buildCategoryFilterSqlD1(artIds);
+    const videoFilter = buildCategoryFilterSqlD1(videoIds);
+    const projectFilter = buildCategoryFilterSqlD1(projectIds);
+
+    const [radioCorner, artCorner, videoCorner, projectCorner] = await Promise.all([
+      radioIds.length
+        ? queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked' AND ${radioFilter.sql}`, radioFilter.params, CUSTOM_WORK_ORDER_SQL, 4)
+        : Promise.resolve([]),
+      artIds.length
+        ? queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked' AND ${artFilter.sql}`, artFilter.params, CUSTOM_WORK_ORDER_SQL, 6)
+        : Promise.resolve([]),
+      videoIds.length
+        ? queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked' AND ${videoFilter.sql}`, videoFilter.params, CUSTOM_WORK_ORDER_SQL, 4)
+        : Promise.resolve([]),
+      projectIds.length
+        ? queryWorksD1(db, `WHERE w.status = 'published' AND w.embed_status != 'blocked' AND ${projectFilter.sql}`, projectFilter.params, CUSTOM_WORK_ORDER_SQL, 6)
+        : Promise.resolve([]),
+    ]);
+
     return jsonResponse({
       settings,
       categories,
@@ -1252,8 +1405,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
       params.push(like, like, like, like);
     }
     if (categoryId && Number.isFinite(categoryId)) {
-      conditions.push(`(w.category_id = ? OR w.subcategory_id = ?)`);
-      params.push(categoryId, categoryId);
+      const catFilter = buildCategoryFilterSqlD1(await getCategoryTreeIdsD1(db, categoryId));
+      conditions.push(catFilter.sql);
+      params.push(...catFilter.params);
     }
     if (contentType && VALID_CONTENT_TYPES.includes(contentType as ContentType)) {
       conditions.push(`w.content_type = ?`);
@@ -1308,10 +1462,12 @@ export async function onRequest(context: EventContext): Promise<Response> {
     );
     if (!items.length) return jsonResponse({ error: 'الإنتاج المطلوب غير متاح.' }, 404);
     const item = items[0];
+    const relIds = [item.category_id, ...(item.subcategory_id ? [item.subcategory_id] : []), ...item.extra_category_ids];
+    const relFilter = buildCategoryFilterSqlD1(relIds);
     const related = await queryWorksD1(
       db,
-      `WHERE w.id != ? AND w.status = 'published' AND w.embed_status != 'blocked' AND (w.category_id = ? OR w.content_type = ?)`,
-      [item.id, item.category_id, item.content_type],
+      `WHERE w.id != ? AND w.status = 'published' AND w.embed_status != 'blocked' AND ${relFilter.sql}`,
+      [item.id, ...relFilter.params],
       'w.views_count DESC, w.publish_date DESC',
       4
     );
@@ -1508,8 +1664,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
         params.push(like, like, like);
       }
       if (categoryId && Number.isFinite(categoryId)) {
-        conditions.push(`(w.category_id = ? OR w.subcategory_id = ?)`);
-        params.push(categoryId, categoryId);
+        const catFilter = buildCategoryFilterSqlD1(await getCategoryTreeIdsD1(db, categoryId));
+        conditions.push(catFilter.sql);
+        params.push(...catFilter.params);
       }
       if (contentType && VALID_CONTENT_TYPES.includes(contentType as ContentType)) {
         conditions.push(`w.content_type = ?`);
@@ -1581,6 +1738,8 @@ export async function onRequest(context: EventContext): Promise<Response> {
             .map((u) => normalizeImageUrl(u))
         : [];
       const extraMedia = sanitizeExtraMediaEdge(body.extra_media);
+      const validSubId = body.subcategory_id ? Number(body.subcategory_id) : null;
+      const extraCategoryIds = sanitizeExtraCategoryIdsEdge(body.extra_category_ids, categoryId, validSubId);
       const rawOrder = Number(body.sort_order);
       let effectiveOrder =
         body.sort_order !== undefined &&
@@ -1600,9 +1759,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
           INSERT INTO work_items (
             title, description, student_name, grade_level, class_section, publish_date,
             content_type, source_method, original_url, embed_url, media_mime,
-            thumbnail_url, gallery_urls, extra_media, category_id, subcategory_id, keywords,
+            thumbnail_url, gallery_urls, extra_media, category_id, subcategory_id, extra_category_ids, keywords,
             status, featured, embed_status, embed_note, sort_order, is_sample
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `)
         .bind(
           title,
@@ -1622,7 +1781,8 @@ export async function onRequest(context: EventContext): Promise<Response> {
           JSON.stringify(galleryUrls),
           JSON.stringify(extraMedia),
           categoryId,
-          body.subcategory_id ? Number(body.subcategory_id) : null,
+          validSubId,
+          JSON.stringify(extraCategoryIds),
           typeof body.keywords === 'string' ? body.keywords.trim() : '',
           VALID_STATUSES.includes(body.status as PublishStatus) ? body.status : 'draft',
           body.featured ? 1 : 0,
@@ -1683,6 +1843,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
               .map((u) => normalizeImageUrl(u))
           : [];
         const extraMedia = sanitizeExtraMediaEdge(body.extra_media);
+        const primaryCatId = Number(body.category_id);
+        const validSubId = body.subcategory_id ? Number(body.subcategory_id) : null;
+        const extraCategoryIds = sanitizeExtraCategoryIdsEdge(body.extra_category_ids, primaryCatId, validSubId);
         const rawOrder = Number(body.sort_order);
         const sortOrder =
           body.sort_order !== undefined &&
@@ -1698,7 +1861,7 @@ export async function onRequest(context: EventContext): Promise<Response> {
               title = ?, description = ?, student_name = ?, grade_level = ?, class_section = ?,
               publish_date = ?, content_type = ?, source_method = ?, original_url = ?,
               embed_url = ?, media_mime = ?, thumbnail_url = ?, gallery_urls = ?, extra_media = ?,
-              category_id = ?, subcategory_id = ?, keywords = ?, status = ?, featured = ?,
+              category_id = ?, subcategory_id = ?, extra_category_ids = ?, keywords = ?, status = ?, featured = ?,
               embed_status = ?, embed_note = ?, sort_order = ?, updated_at = datetime('now')
             WHERE id = ?
           `)
@@ -1719,8 +1882,9 @@ export async function onRequest(context: EventContext): Promise<Response> {
               : parsed.thumbnailUrl,
             JSON.stringify(galleryUrls),
             JSON.stringify(extraMedia),
-            Number(body.category_id),
-            body.subcategory_id ? Number(body.subcategory_id) : null,
+            primaryCatId,
+            validSubId,
+            JSON.stringify(extraCategoryIds),
             typeof body.keywords === 'string' ? body.keywords.trim() : '',
             VALID_STATUSES.includes(body.status as PublishStatus) ? body.status : 'draft',
             body.featured ? 1 : 0,
@@ -1779,11 +1943,32 @@ export async function onRequest(context: EventContext): Promise<Response> {
         if (Number(usage?.c || 0) > 0) {
           return jsonResponse({ error: 'لا يمكن حذف تصنيف يحتوي على إنتاجات مرتبطة به.' }, 409);
         }
-        await db.batch([
+        const removedIds = new Set(await getCategoryTreeIdsD1(db, id));
+        const { results: worksWithExtras = [] } = await db
+          .prepare(`SELECT id, extra_category_ids FROM work_items WHERE extra_category_ids != '[]'`)
+          .all<{ id: number; extra_category_ids: string }>();
+        const stmts: D1PreparedStatement[] = [];
+        for (const w of worksWithExtras) {
+          try {
+            const parsed = JSON.parse(w.extra_category_ids);
+            if (Array.isArray(parsed)) {
+              const filtered = parsed.map(Number).filter((n) => Number.isInteger(n) && n > 0 && !removedIds.has(n));
+              if (filtered.length !== parsed.length) {
+                stmts.push(
+                  db.prepare('UPDATE work_items SET extra_category_ids = ? WHERE id = ?').bind(JSON.stringify(filtered), w.id)
+                );
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+        stmts.push(
           db.prepare('UPDATE work_items SET subcategory_id = NULL WHERE subcategory_id = ?').bind(id),
           db.prepare('DELETE FROM categories WHERE parent_id = ?').bind(id),
-          db.prepare('DELETE FROM categories WHERE id = ?').bind(id),
-        ]);
+          db.prepare('DELETE FROM categories WHERE id = ?').bind(id)
+        );
+        await db.batch(stmts);
         return jsonResponse({ categories: await getCategoriesD1(db, false) });
       }
     }

@@ -10,6 +10,7 @@ import {
   FolderKanban,
   HardDrive,
   Image as ImageIcon,
+  Layers,
   Link2,
   Plus,
   Save,
@@ -91,6 +92,8 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
   const [publishDate, setPublishDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [categoryId, setCategoryId] = useState<number>(1);
   const [subcategoryId, setSubcategoryId] = useState<string>('');
+  const [extraCategoryIds, setExtraCategoryIds] = useState<number[]>([]);
+  const [showExtraCats, setShowExtraCats] = useState(false);
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [galleryItems, setGalleryItems] = useState<string[]>(['', '']);
   const [keywords, setKeywords] = useState('');
@@ -158,6 +161,9 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
         setPublishDate(item.publish_date);
         setCategoryId(item.category_id);
         setSubcategoryId(item.subcategory_id ? String(item.subcategory_id) : '');
+        const loadedExtras = Array.isArray(item.extra_category_ids) ? item.extra_category_ids : [];
+        setExtraCategoryIds(loadedExtras);
+        if (loadedExtras.length > 0) setShowExtraCats(true);
         setThumbnailUrl(item.thumbnail_url);
         setGalleryItems(
           item.gallery_urls && item.gallery_urls.length > 0 ? item.gallery_urls : ['']
@@ -379,6 +385,12 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
     });
   };
 
+  const toggleExtraCategory = (id: number) => {
+    setExtraCategoryIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
   const handleSave = async (targetStatus: PublishStatus) => {
     setFeedback(null);
     if (!title.trim()) {
@@ -420,6 +432,9 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
         gallery_urls: galleryUrlsArray,
         category_id: categoryId,
         subcategory_id: subcategoryId ? Number(subcategoryId) : null,
+        extra_category_ids: extraCategoryIds.filter(
+          (id) => id !== categoryId && id !== (subcategoryId ? Number(subcategoryId) : -1)
+        ),
         keywords: keywords.trim(),
         status: targetStatus,
         featured,
@@ -438,6 +453,7 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
 
       setStatus(res.item.status);
       setSortOrder(res.item.sort_order ? String(res.item.sort_order) : '');
+      setExtraCategoryIds(Array.isArray(res.item.extra_category_ids) ? res.item.extra_category_ids : []);
       setExtraMediaItems(Array.isArray(res.item.extra_media) ? res.item.extra_media : []);
       await refreshPublicBootstrap();
       setFeedback({
@@ -921,8 +937,10 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                   <select
                     value={categoryId}
                     onChange={(e) => {
-                      setCategoryId(Number(e.target.value));
+                      const nextCatId = Number(e.target.value);
+                      setCategoryId(nextCatId);
                       setSubcategoryId('');
+                      setExtraCategoryIds((prev) => prev.filter((id) => id !== nextCatId));
                     }}
                     className="w-full px-3 py-2.5 rounded-lg border border-slate-300 bg-white text-sm text-slate-900"
                   >
@@ -940,7 +958,14 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                   </label>
                   <select
                     value={subcategoryId}
-                    onChange={(e) => setSubcategoryId(e.target.value)}
+                    onChange={(e) => {
+                      const nextSub = e.target.value;
+                      setSubcategoryId(nextSub);
+                      if (nextSub) {
+                        const subNum = Number(nextSub);
+                        setExtraCategoryIds((prev) => prev.filter((id) => id !== subNum));
+                      }
+                    }}
                     className="w-full px-3 py-2.5 rounded-lg border border-slate-300 bg-white text-sm text-slate-900"
                   >
                     <option value="">بدون تصنيف فرعي</option>
@@ -950,6 +975,115 @@ export function AdminWorkEditorPage({ editId }: { editId?: number }) {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Optional Multi-Category Assignment */}
+                <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                        <Layers className="w-4 h-4 text-[#1E40AF]" />
+                        <span>تصنيفات إضافية يظهر فيها هذا المحتوى (اختياري)</span>
+                        {extraCategoryIds.length > 0 && (
+                          <span className="px-2 py-0.5 rounded-md bg-[#1E40AF] text-white text-xs font-mono">
+                            {extraCategoryIds.length}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        يظهر المحتوى افتراضياً فقط في التصنيف المختار أعلاه. أضف تصنيفات أخرى هنا إذا أردت عرضه في أكثر من محور.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {extraCategoryIds.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setExtraCategoryIds([])}
+                          className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-100 cursor-pointer"
+                        >
+                          إلغاء الكل
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowExtraCats((v) => !v)}
+                        className="px-3 py-1.5 rounded-lg bg-[#1E40AF]/10 text-[#1E40AF] text-xs font-medium hover:bg-[#1E40AF]/15 cursor-pointer"
+                      >
+                        {showExtraCats ? 'إخفاء القائمة' : 'اختيار تصنيفات إضافية'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {showExtraCats && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-200">
+                      {mainCategories.map((mainCat) => {
+                        const subs = categories.filter((c) => c.parent_id === mainCat.id);
+                        const isPrimaryMain = mainCat.id === categoryId;
+                        const checkedMain = extraCategoryIds.includes(mainCat.id);
+                        return (
+                          <div
+                            key={mainCat.id}
+                            className="bg-white border border-slate-200 rounded-lg p-3 space-y-2"
+                          >
+                            <label
+                              className={`flex items-center gap-2 text-xs font-semibold ${
+                                isPrimaryMain
+                                  ? 'text-[#1E40AF]'
+                                  : 'text-slate-800 cursor-pointer'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                disabled={isPrimaryMain}
+                                checked={isPrimaryMain || checkedMain}
+                                onChange={() => toggleExtraCategory(mainCat.id)}
+                                className="w-4 h-4 accent-[#1E40AF] rounded"
+                              />
+                              <span>{mainCat.name}</span>
+                              {isPrimaryMain && (
+                                <span className="text-[11px] font-normal text-slate-500">
+                                  (الأساسي)
+                                </span>
+                              )}
+                            </label>
+
+                            {subs.length > 0 && (
+                              <div className="pr-5 space-y-1.5 border-r border-slate-100">
+                                {subs.map((sub) => {
+                                  const isPrimarySub = String(sub.id) === subcategoryId;
+                                  const checkedSub = extraCategoryIds.includes(sub.id);
+                                  return (
+                                    <label
+                                      key={sub.id}
+                                      className={`flex items-center gap-2 text-xs ${
+                                        isPrimarySub
+                                          ? 'text-[#1E40AF]'
+                                          : 'text-slate-600 cursor-pointer'
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        disabled={isPrimarySub}
+                                        checked={isPrimarySub || checkedSub}
+                                        onChange={() => toggleExtraCategory(sub.id)}
+                                        className="w-3.5 h-3.5 accent-[#1E40AF] rounded"
+                                      />
+                                      <span>{sub.name}</span>
+                                      {isPrimarySub && (
+                                        <span className="text-[11px] text-slate-500">
+                                          (فرعي أساسي)
+                                        </span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div>

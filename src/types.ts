@@ -55,6 +55,7 @@ export interface WorkItem {
   extra_media: ExtraMediaItem[];
   category_id: number;
   subcategory_id: number | null;
+  extra_category_ids: number[];
   category_name?: string;
   subcategory_name?: string | null;
   keywords: string;

@@ -4,28 +4,12 @@ import { useApp } from '../../context/AppContext.tsx';
 import { MediaPlayer } from '../../components/MediaPlayer.tsx';
 import { WorkCard } from '../../components/WorkCard.tsx';
 import { CONTENT_TYPE_LABELS, formatArabicDate } from '../../lib/mediaUtils.ts';
+import { getCornerTargetForCategory } from '../../lib/categoryMapping.ts';
 import { isSettingEnabled } from '../../lib/settingsDefaults.ts';
-import type { ContentType, WorkItem } from '../../types.ts';
-
-function getCornerForContentType(contentType: ContentType): { path: string; label: string } {
-  switch (contentType) {
-    case 'audio':
-      return { path: '/audio', label: 'العودة إلى الإذاعة المدرسية' };
-    case 'video':
-      return { path: '/videos', label: 'العودة إلى الفيديوهات' };
-    case 'image':
-      return { path: '/gallery', label: 'العودة إلى المعرض الفني' };
-    case 'project':
-    case 'pdf':
-    case 'presentation':
-      return { path: '/projects', label: 'العودة إلى المشاريع' };
-    default:
-      return { path: '/works', label: 'العودة إلى الإنتاجات' };
-  }
-}
+import type { WorkItem } from '../../types.ts';
 
 export function WorkDetailPage({ workId }: { workId: number }) {
-  const { navigate, lastPublicRoute, settings } = useApp();
+  const { navigate, lastPublicRoute, settings, categories } = useApp();
   const [item, setItem] = useState<WorkItem | null>(null);
   const [related, setRelated] = useState<WorkItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,17 +98,17 @@ export function WorkDetailPage({ workId }: { workId: number }) {
         return { path: lastPublicRoute, label: 'العودة إلى الإنتاجات' };
       }
       if (lastPublicRoute === '/') {
-        if (item?.content_type === 'audio') {
-          return { path: '/audio', label: 'العودة إلى الإذاعة المدرسية' };
+        if (item) {
+          return getCornerTargetForCategory(item.category_id, categories, item.category_name);
         }
         return { path: '/', label: 'العودة إلى الرئيسية' };
       }
     }
     if (item) {
-      return getCornerForContentType(item.content_type);
+      return getCornerTargetForCategory(item.category_id, categories, item.category_name);
     }
     return { path: '/works', label: 'العودة إلى المعرض' };
-  }, [lastPublicRoute, item]);
+  }, [lastPublicRoute, item, categories]);
 
   const handleCopyShare = async () => {
     try {
@@ -175,7 +159,14 @@ export function WorkDetailPage({ workId }: { workId: number }) {
         .filter(Boolean)
     : [];
 
-  const typeCorner = getCornerForContentType(item.content_type);
+  const categoryCorner = getCornerTargetForCategory(
+    item.category_id,
+    categories,
+    item.category_name
+  );
+  const extraCategoriesList = (item.extra_category_ids || [])
+    .map((id) => categories.find((c) => c.id === id))
+    .filter((c): c is NonNullable<typeof c> => Boolean(c));
   const showViews = isSettingEnabled(settings.show_view_counts);
   const showShare = isSettingEnabled(settings.show_share_button);
 
@@ -235,10 +226,10 @@ export function WorkDetailPage({ workId }: { workId: number }) {
             )}
             <span aria-hidden="true">·</span>
             <a
-              href={typeCorner.path}
+              href={`/works?contentType=${item.content_type}`}
               onClick={(e) => {
                 e.preventDefault();
-                navigate(typeCorner.path);
+                navigate(`/works?contentType=${item.content_type}`);
               }}
               className="hover:text-[#1E40AF] hover:underline underline-offset-4 cursor-pointer"
             >
@@ -323,10 +314,10 @@ export function WorkDetailPage({ workId }: { workId: number }) {
                 <dt className="text-slate-500 shrink-0">نوع المحتوى</dt>
                 <dd className="font-medium text-slate-900 text-left">
                   <a
-                    href={typeCorner.path}
+                    href={categoryCorner.path}
                     onClick={(e) => {
                       e.preventDefault();
-                      navigate(typeCorner.path);
+                      navigate(categoryCorner.path);
                     }}
                     className="text-[#1E40AF] hover:underline"
                   >
@@ -334,6 +325,26 @@ export function WorkDetailPage({ workId }: { workId: number }) {
                   </a>
                 </dd>
               </div>
+              {extraCategoriesList.length > 0 && (
+                <div className="py-3 flex items-start justify-between gap-4">
+                  <dt className="text-slate-500 shrink-0">تصنيفات أخرى</dt>
+                  <dd className="font-medium text-slate-900 text-left flex flex-wrap justify-end gap-1.5">
+                    {extraCategoriesList.map((cat) => (
+                      <a
+                        key={cat.id}
+                        href={`/works?categoryId=${cat.id}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          navigate(`/works?categoryId=${cat.id}`);
+                        }}
+                        className="text-xs px-2 py-0.5 rounded bg-slate-100 text-[#1E40AF] hover:bg-blue-50"
+                      >
+                        {cat.name}
+                      </a>
+                    ))}
+                  </dd>
+                </div>
+              )}
             </dl>
           </div>
         </div>
